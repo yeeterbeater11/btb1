@@ -1,5 +1,8 @@
-import React, { useState, useEffect } from 'react';
-import { Clock, AlertCircle, Phone, MapPin, LifeBuoy, Home, Info, Sparkles, TrendingUp, DollarSign, ShoppingBag, BarChart3, Lock, ArrowLeft, ChevronRight, Users, User, Download, X } from 'lucide-react';
+// Beat the Bet - Recovery App
+// Uses React, ReactDOM, and Lucide icons from CDN
+
+const { useState, useEffect } = React;
+const { Clock, AlertCircle, Phone, MapPin, LifeBuoy, Home, Info, Sparkles, TrendingUp, DollarSign, ShoppingBag, BarChart3, Lock, ArrowLeft, ChevronRight, Users, User, Download, X } = lucide;
 
 // Supabase Configuration
 const SUPABASE_URL = 'https://emrpkubjspydnbrittuy.supabase.co';
