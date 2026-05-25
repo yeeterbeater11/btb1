@@ -7,39 +7,52 @@
   <meta name="description" content="Your gambling recovery companion" />
   <meta name="theme-color" content="#1e293b" />
 
-  <!-- Tailwind CSS -->
   <script src="https://cdn.tailwindcss.com"></script>
-
-  <!-- React & ReactDOM (18) -->
   <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
   <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
-
-  <!-- Babel (JSX transpiler) -->
   <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
-
-  <!-- Lucide Icons -->
   <script src="https://unpkg.com/lucide@latest/dist/umd/lucide.min.js"></script>
 
-  <!-- Recharts stub: replaces all Recharts components with no-op divs -->
-  <!-- This prevents the oneOfType crash with React 18 UMD -->
   <script>
+    // Recharts stub - prevents oneOfType crash
     window.Recharts = new Proxy({}, {
       get: function(_, name) {
-        // Return a simple functional component stub for any Recharts component
-        return function RechartsStub(props) {
-          return null;
-        };
+        return function RechartsStub() { return null; };
       }
+    });
+
+    // Wait for lucide to load then create safe React components for every icon
+    window.addEventListener('load', function() {
+      if (!window.lucide) return;
+
+      // lucide UMD exposes createIcons() but not React components directly.
+      // We need lucide-react style components. Build them from the icon data.
+      var iconData = window.lucide;
+
+      // Create a safe icon component factory
+      window._lucideReactIcons = {};
+
+      Object.keys(iconData).forEach(function(key) {
+        // Only process icon data objects (they have a specific shape)
+        var val = iconData[key];
+        if (Array.isArray(val) || typeof val !== 'object' || val === null) return;
+        if (typeof val === 'function') return;
+
+        // Each lucide icon in UMD is [width, height, aliases, attrs, children]
+        // We'll create a React component that renders an SVG
+        window._lucideReactIcons[key] = function LucideIcon(props) {
+          var size = props.size || props.width || 24;
+          var color = props.color || 'currentColor';
+          var strokeWidth = props.strokeWidth || 2;
+          var className = props.className || '';
+          return null; // fallback - will be replaced below
+        };
+      });
     });
   </script>
 
   <style>
-    body {
-      margin: 0;
-      padding: 0;
-      background-color: #0f172a;
-      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-    }
+    body { margin: 0; padding: 0; background-color: #0f172a; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; }
     #root { min-height: 100vh; }
     ::-webkit-scrollbar { width: 6px; }
     ::-webkit-scrollbar-track { background: #1e293b; }
@@ -56,8 +69,110 @@
         // Remove "export default" so Babel standalone can handle it
         const cleaned = code.replace(/export\s+default\s+function\s+/, 'function ');
 
+        // Replace the lucide destructuring line with safe SVG-based React components
+        // This replaces: const { Clock, AlertCircle, ... } = lucide;
+        const lucideReplacement = `
+// Safe Lucide icon components using inline SVG paths
+function makeLucideIcon(paths) {
+  return function LucideIcon({ size, width, height, color, strokeWidth, className, style, onClick }) {
+    const s = size || width || height || 24;
+    const c = color || 'currentColor';
+    const sw = strokeWidth || 2;
+    return React.createElement('svg', {
+      xmlns: 'http://www.w3.org/2000/svg',
+      width: s, height: s,
+      viewBox: '0 0 24 24',
+      fill: 'none',
+      stroke: c,
+      strokeWidth: sw,
+      strokeLinecap: 'round',
+      strokeLinejoin: 'round',
+      className: className || '',
+      style: style || {},
+      onClick: onClick
+    }, ...paths.map((p, i) => React.createElement('path', { key: i, d: p })));
+  };
+}
+
+const Clock = makeLucideIcon(['M12 2a10 10 0 1 0 0 20A10 10 0 0 0 12 2z','M12 6v6l4 2']);
+const AlertCircle = makeLucideIcon(['M12 2a10 10 0 1 0 0 20A10 10 0 0 0 12 2z','M12 8v4','M12 16h.01']);
+const Phone = makeLucideIcon(['M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07A19.5 19.5 0 0 1 4.15 11.5 19.79 19.79 0 0 1 1.08 2.86 2 2 0 0 1 3.06 1h3a2 2 0 0 1 2 1.72c.127.96.361 1.903.7 2.81a2 2 0 0 1-.45 2.11L7.09 8.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45c.907.339 1.85.573 2.81.7A2 2 0 0 1 21 16.92z']);
+const MapPin = makeLucideIcon(['M21 10c0 7-9 13-9 13S3 17 3 10a9 9 0 1 1 18 0z','M12 13a3 3 0 1 0 0-6 3 3 0 0 0 0 6z']);
+const LifeBuoy = makeLucideIcon(['M12 2a10 10 0 1 0 0 20A10 10 0 0 0 12 2z','M12 8a4 4 0 1 0 0 8 4 4 0 0 0 0-8z','M4.93 4.93l4.24 4.24','M14.83 14.83l4.24 4.24','M14.83 9.17l4.24-4.24','M4.93 19.07l4.24-4.24']);
+const Home = makeLucideIcon(['M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z','M9 22V12h6v10']);
+const Info = makeLucideIcon(['M12 2a10 10 0 1 0 0 20A10 10 0 0 0 12 2z','M12 16v-4','M12 8h.01']);
+const Sparkles = makeLucideIcon(['M12 3l1.5 4.5L18 9l-4.5 1.5L12 15l-1.5-4.5L6 9l4.5-1.5z','M5 3l.5 1.5L7 5l-1.5.5L5 7l-.5-1.5L3 5l1.5-.5z','M19 13l.5 1.5L21 15l-1.5.5L19 17l-.5-1.5L17 15l1.5-.5z']);
+const TrendingUp = makeLucideIcon(['M23 6l-9.5 9.5-5-5L1 18','M17 6h6v6']);
+const DollarSign = makeLucideIcon(['M12 1v22','M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6']);
+const ShoppingBag = makeLucideIcon(['M6 2L3 6v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V6l-3-4z','M3 6h18','M16 10a4 4 0 0 1-8 0']);
+const BarChart3 = makeLucideIcon(['M3 3v18h18','M18 17V9','M13 17V5','M8 17v-3']);
+const Lock = makeLucideIcon(['M19 11H5a2 2 0 0 0-2 2v7a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7a2 2 0 0 0-2-2z','M7 11V7a5 5 0 0 1 10 0v4']);
+const ArrowLeft = makeLucideIcon(['M19 12H5','M12 19l-7-7 7-7']);
+const ChevronRight = makeLucideIcon(['M9 18l6-6-6-6']);
+const Users = makeLucideIcon(['M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2','M9 7a4 4 0 1 0 0-8 4 4 0 0 0 0 8z','M23 21v-2a4 4 0 0 0-3-3.87','M16 3.13a4 4 0 0 1 0 7.75']);
+const User = makeLucideIcon(['M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2','M12 11a4 4 0 1 0 0-8 4 4 0 0 0 0 8z']);
+const Download = makeLucideIcon(['M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4','M7 10l5 5 5-5','M12 15V3']);
+const X = makeLucideIcon(['M18 6L6 18','M6 6l12 12']);
+const Eye = makeLucideIcon(['M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z','M12 9a3 3 0 1 0 0 6 3 3 0 0 0 0-6z']);
+const EyeOff = makeLucideIcon(['M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94','M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19','M1 1l22 22']);
+const Star = makeLucideIcon(['M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01z']);
+const Heart = makeLucideIcon(['M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z']);
+const Music = makeLucideIcon(['M9 18V5l12-2v13','M6 21a3 3 0 1 0 0-6 3 3 0 0 0 0 6z','M18 19a3 3 0 1 0 0-6 3 3 0 0 0 0 6z']);
+const Play = makeLucideIcon(['M5 3l14 9-14 9V3z']);
+const Settings = makeLucideIcon(['M12 15a3 3 0 1 0 0-6 3 3 0 0 0 0 6z','M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z']);
+const ChevronLeft = makeLucideIcon(['M15 18l-6-6 6-6']);
+const ChevronDown = makeLucideIcon(['M6 9l6 6 6-6']);
+const ChevronUp = makeLucideIcon(['M18 15l-6-6-6 6']);
+const Plus = makeLucideIcon(['M12 5v14','M5 12h14']);
+const Minus = makeLucideIcon(['M5 12h14']);
+const Check = makeLucideIcon(['M20 6L9 17l-5-5']);
+const CheckCircle = makeLucideIcon(['M22 11.08V12a10 10 0 1 1-5.93-9.14','M22 4L12 14.01l-3-3']);
+const Circle = makeLucideIcon(['M12 2a10 10 0 1 0 0 20A10 10 0 0 0 12 2z']);
+const Award = makeLucideIcon(['M12 15a7 7 0 1 0 0-14 7 7 0 0 0 0 14z','M8.21 13.89L7 23l5-3 5 3-1.21-9.12']);
+const Target = makeLucideIcon(['M12 2a10 10 0 1 0 0 20A10 10 0 0 0 12 2z','M12 6a6 6 0 1 0 0 12A6 6 0 0 0 12 6z','M12 10a2 2 0 1 0 0 4 2 2 0 0 0 0-4z']);
+const Zap = makeLucideIcon(['M13 2L3 14h9l-1 8 10-12h-9l1-8z']);
+const Flame = makeLucideIcon(['M8.5 14.5A2.5 2.5 0 0 0 11 12c0-1.38-.5-2-1-3-1.072-2.143-.224-4.054 2-6 .5 2.5 2 4.9 4 6.5 2 1.6 3 3.5 3 5.5a7 7 0 1 1-14 0c0-1.153.433-2.294 1-3a2.5 2.5 0 0 0 2.5 2.5z']);
+const Calendar = makeLucideIcon(['M19 4H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V6a2 2 0 0 0-2-2z','M16 2v4','M8 2v4','M3 10h18']);
+const Trash = makeLucideIcon(['M3 6h18','M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6','M8 6V4a1 1 0 0 1 1-1h6a1 1 0 0 1 1 1v2']);
+const Edit = makeLucideIcon(['M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7','M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z']);
+const Save = makeLucideIcon(['M19 21H5a2 2 0 0 0-2 2V5a2 2 0 0 0 2-2h11l5 5v11a2 2 0 0 1-2 2z','M17 21v-8H7v8','M7 3v5h8']);
+const Send = makeLucideIcon(['M22 2L11 13','M22 2L15 22l-4-9-9-4 20-7z']);
+const MessageCircle = makeLucideIcon(['M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z']);
+const Share2 = makeLucideIcon(['M18 8a3 3 0 1 0 0-6 3 3 0 0 0 0 6z','M6 15a3 3 0 1 0 0-6 3 3 0 0 0 0 6z','M18 22a3 3 0 1 0 0-6 3 3 0 0 0 0 6z','M8.59 13.51l6.83 3.98','M15.41 6.51l-6.82 3.98']);
+const RefreshCw = makeLucideIcon(['M23 4v6h-6','M1 20v-6h6','M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15']);
+const LogOut = makeLucideIcon(['M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4','M16 17l5-5-5-5','M21 12H9']);
+const Shield = makeLucideIcon(['M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z']);
+const Smile = makeLucideIcon(['M12 2a10 10 0 1 0 0 20A10 10 0 0 0 12 2z','M8 14s1.5 2 4 2 4-2 4-2','M9 9h.01','M15 9h.01']);
+const Frown = makeLucideIcon(['M12 2a10 10 0 1 0 0 20A10 10 0 0 0 12 2z','M16 16s-1.5-2-4-2-4 2-4 2','M9 9h.01','M15 9h.01']);
+const Meh = makeLucideIcon(['M12 2a10 10 0 1 0 0 20A10 10 0 0 0 12 2z','M8 15h8','M9 9h.01','M15 9h.01']);
+const Wind = makeLucideIcon(['M9.59 4.59A2 2 0 1 1 11 8H2m10.59 11.41A2 2 0 1 0 14 16H2m15.73-8.27A2.5 2.5 0 1 1 19.5 12H2']);
+const Coffee = makeLucideIcon(['M18 8h1a4 4 0 0 1 0 8h-1','M2 8h16v9a4 4 0 0 1-4 4H6a4 4 0 0 1-4-4V8z','M6 1v3','M10 1v3','M14 1v3']);
+const BookOpen = makeLucideIcon(['M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z','M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z']);
+const Mic = makeLucideIcon(['M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z','M19 10v2a7 7 0 0 1-14 0v-2','M12 19v4','M8 23h8']);
+const Camera = makeLucideIcon(['M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z','M12 17a4 4 0 1 0 0-8 4 4 0 0 0 0 8z']);
+const Image = makeLucideIcon(['M21 19a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h14a2 2 0 0 0 2 2v14z','M8.5 10a1.5 1.5 0 1 0 0-3 1.5 1.5 0 0 0 0 3z','M21 15l-5-5L5 21']);
+const Volume2 = makeLucideIcon(['M11 5L6 9H2v6h4l5 4V5z','M19.07 4.93a10 10 0 0 1 0 14.14','M15.54 8.46a5 5 0 0 1 0 7.07']);
+const Activity = makeLucideIcon(['M22 12h-4l-3 9L9 3l-3 9H2']);
+const Navigation = makeLucideIcon(['M3 11l19-9-9 19-2-8-8-2z']);
+const Filter = makeLucideIcon(['M22 3H2l8 9.46V19l4 2v-8.54z']);
+const Search = makeLucideIcon(['M11 17a6 6 0 1 0 0-12 6 6 0 0 0 0 12z','M21 21l-4.35-4.35']);
+const Bell = makeLucideIcon(['M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9','M13.73 21a2 2 0 0 1-3.46 0']);
+const Globe = makeLucideIcon(['M12 2a10 10 0 1 0 0 20A10 10 0 0 0 12 2z','M2 12h20','M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z']);
+const ExternalLink = makeLucideIcon(['M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6','M15 3h6v6','M10 14L21 3']);
+const Clipboard = makeLucideIcon(['M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2','M9 2h6a1 1 0 0 1 1 1v2a1 1 0 0 1-1 1H9a1 1 0 0 1-1-1V3a1 1 0 0 1 1-1z']);
+const List = makeLucideIcon(['M8 6h13','M8 12h13','M8 18h13','M3 6h.01','M3 12h.01','M3 18h.01']);
+const MoreVertical = makeLucideIcon(['M12 13a1 1 0 1 0 0-2 1 1 0 0 0 0 2z','M12 6a1 1 0 1 0 0-2 1 1 0 0 0 0 2z','M12 20a1 1 0 1 0 0-2 1 1 0 0 0 0 2z']);
+const AlertTriangle = makeLucideIcon(['M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z','M12 9v4','M12 17h.01']);
+`;
+
+        // Replace the lucide destructuring line with our safe components
+        const withSafeIcons = cleaned.replace(
+          /const\s*\{[^}]*\}\s*=\s*lucide\s*;/,
+          lucideReplacement
+        );
+
         // Append the mount call
-        const withMount = cleaned + `
+        const withMount = withSafeIcons + `
 ;
 const rootEl = document.getElementById('root');
 const root = ReactDOM.createRoot(rootEl);
