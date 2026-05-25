@@ -925,6 +925,28 @@ export default function BeatTheBet() {
           </div>
         </div>
 
+        {/* SOS Panic Button */}
+        <div className="px-6 pt-4">
+          <button
+            onClick={() => {
+              const now = new Date().toISOString();
+              const updated = [...panicButtonTimestamps, now];
+              setPanicButtonTimestamps(updated);
+              localStorage.setItem('panicButtonTimestamps', JSON.stringify(updated));
+              setShowPanicModal(true);
+            }}
+            className="w-full bg-gradient-to-r from-red-500 to-red-600 hover:from-red-600 hover:to-red-700 text-white rounded-2xl p-5 shadow-lg transition-all active:scale-95"
+          >
+            <div className="flex items-center justify-center gap-3">
+              <span className="text-3xl">🆘</span>
+              <div className="text-left">
+                <p className="font-bold text-lg">I Need Help Right Now</p>
+                <p className="text-sm opacity-90">Tap here when you feel the urge</p>
+              </div>
+            </div>
+          </button>
+        </div>
+
         {/* First Time Welcome */}
         {daysClean === 0 && (
           <div className="px-6 pt-6">
@@ -1098,7 +1120,7 @@ export default function BeatTheBet() {
 
             {/* All Tools Button */}
             <button
-              onClick={() => setActiveTab('resources')}
+              onClick={() => { setActiveTab('resources'); setActiveTool(null); }}
               className="w-full bg-white hover:bg-gray-50 rounded-xl shadow-md p-4 text-center border-2 border-dashed border-gray-300 hover:border-gray-400 transition-all"
             >
               <p className="text-sm font-semibold text-gray-700">View All Tools →</p>
@@ -1132,7 +1154,7 @@ export default function BeatTheBet() {
           </button>
 
           <button
-            onClick={() => window.open('https://www.gamblersanonymous.org.au/meetings/', '_blank')}
+            onClick={() => window.open('https://gaaustralia.org.au/meetings/?tsml-day=any&tsml-distance=&tsml-mode=me&tsml-view=map', '_blank')}
             className="w-full bg-green-500 hover:bg-green-600 text-white rounded-lg p-4 flex items-center transition-colors"
           >
             <MapPin className="w-5 h-5 mr-3" />
@@ -1299,10 +1321,7 @@ export default function BeatTheBet() {
                             <p className="text-xs text-gray-700 line-clamp-2">{reason.content}</p>
                           )}
                           {reason.type === 'photo' && (
-                            <div className="text-center">
-                              <span className="text-2xl">📷</span>
-                              <p className="text-xs text-gray-600 mt-1">Your reminder photo</p>
-                            </div>
+                            <img src={reason.content} alt="Reminder" className="w-full rounded-lg object-cover max-h-24" />
                           )}
                         </div>
                       ))}
@@ -1775,23 +1794,23 @@ export default function BeatTheBet() {
             </p>
             
             <div className="bg-red-50 rounded-lg p-4 mb-6">
-              <h3 className="font-semibold text-gray-800 mb-2">What gets blocked:</h3>
+              <h3 className="font-semibold text-gray-800 mb-2">What BetStop is:</h3>
               <ul className="space-y-2 text-sm text-gray-700">
                 <li className="flex items-start">
                   <span className="text-red-500 mr-2">✓</span>
-                  <span>All licensed online betting operators</span>
+                  <span>Australia's national self-exclusion register, run by the Australian Government</span>
                 </li>
                 <li className="flex items-start">
                   <span className="text-red-500 mr-2">✓</span>
-                  <span>Sports betting apps and websites</span>
+                  <span>A single registration that covers all licensed online wagering operators in Australia</span>
                 </li>
                 <li className="flex items-start">
                   <span className="text-red-500 mr-2">✓</span>
-                  <span>Online casino and poker platforms</span>
+                  <span>Completely free — there are no fees to register or maintain your exclusion</span>
                 </li>
                 <li className="flex items-start">
                   <span className="text-red-500 mr-2">✓</span>
-                  <span>Mobile wagering applications</span>
+                  <span>Legally enforceable — operators are required by law to verify registrations and refuse your bets</span>
                 </li>
               </ul>
             </div>
@@ -1869,7 +1888,7 @@ export default function BeatTheBet() {
             </p>
             
             <button
-              onClick={() => window.open('https://www.gamblersanonymous.org.au/meetings/', '_blank')}
+              onClick={() => window.open('https://gaaustralia.org.au/meetings/?tsml-day=any&tsml-distance=&tsml-mode=me&tsml-view=map', '_blank')}
               className="w-full bg-green-500 hover:bg-green-600 text-white rounded-lg p-4 font-bold transition-colors mb-4"
             >
               Search Meetings Near You →
@@ -3177,47 +3196,7 @@ export default function BeatTheBet() {
 
         <div className="flex-1 p-6 overflow-y-auto">
           <div className="max-w-md mx-auto space-y-6">
-            {/* Profile Setup - Always visible */}
-            <div className="bg-blue-50 border-l-4 border-blue-500 rounded-lg p-5">
-              <h3 className="font-bold text-gray-800 mb-3">Your Profile</h3>
-              <p className="text-sm text-gray-700 mb-4">Help us show you relevant examples</p>
-              
-              <div className="space-y-3">
-                <div>
-                  <label className="block text-sm font-semibold text-gray-700 mb-2">Age Range</label>
-                  <select
-                    value={userAgeRange}
-                    onChange={(e) => {
-                      setUserAgeRange(e.target.value);
-                      localStorage.setItem('userAgeRange', e.target.value);
-                    }}
-                    className="w-full p-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
-                  >
-                    <option value="">Select age range</option>
-                    <option value="18-25">18-25</option>
-                    <option value="26-35">26-35</option>
-                    <option value="36-50">36-50</option>
-                    <option value="51-65">51-65</option>
-                    <option value="66+">66+</option>
-                  </select>
-                </div>
 
-                <div>
-                  <label className="block text-sm font-semibold text-gray-700 mb-2">City (Optional)</label>
-                  <input
-                    type="text"
-                    value={localCity}
-                    onChange={(e) => setLocalCity(e.target.value)}
-                    onBlur={(e) => {
-                      setUserCity(e.target.value);
-                      localStorage.setItem('userCity', e.target.value);
-                    }}
-                    placeholder="e.g., Sydney, Melbourne"
-                    className="w-full p-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
-                  />
-                </div>
-              </div>
-            </div>
 
             {/* Set Daily Spend */}
             <div className="bg-white rounded-xl shadow-md p-6">
@@ -4723,9 +4702,22 @@ export default function BeatTheBet() {
                   </div>
                 ) : (
                   liked.map(artist => (
-                    <div key={artist} className="bg-white rounded-xl shadow-md p-4 flex items-center gap-3">
-                      <span className="text-3xl">❤️</span>
-                      <p className="font-bold">{artist}</p>
+                    <div key={artist} className="bg-white rounded-xl shadow-md p-4 flex items-center justify-between gap-3">
+                      <div className="flex items-center gap-3">
+                        <span className="text-3xl">❤️</span>
+                        <p className="font-bold">{artist}</p>
+                      </div>
+                      <button
+                        onClick={() => {
+                          const updated = {...artistFeedback};
+                          delete updated[artist];
+                          setArtistFeedback(updated);
+                          localStorage.setItem('artistFeedback', JSON.stringify(updated));
+                        }}
+                        className="text-red-500 hover:text-red-700 text-sm font-semibold px-3 py-1 bg-red-50 rounded-lg"
+                      >
+                        Remove
+                      </button>
                     </div>
                   ))
                 )}
@@ -5334,13 +5326,38 @@ export default function BeatTheBet() {
                 </button>
               </div>
 
-              {/* Photo Upload Placeholder */}
-              <div className="bg-gray-100 border-2 border-dashed border-gray-300 rounded-lg p-6 text-center mb-4">
-                <span className="text-4xl block mb-2">📷</span>
-                <p className="text-sm text-gray-600 mb-2">Photo uploads coming soon</p>
-                <p className="text-xs text-gray-500">
-                  Add photos of your family, goals, dreams - anything that reminds you why you're doing this
-                </p>
+              {/* Photo Upload */}
+              <div className="mb-4">
+                <label className="block text-sm font-semibold text-gray-700 mb-2">Add a Photo</label>
+                <label className="block w-full bg-gray-100 border-2 border-dashed border-gray-300 hover:border-red-400 rounded-lg p-6 text-center cursor-pointer transition-colors">
+                  <span className="text-4xl block mb-2">📷</span>
+                  <p className="text-sm text-gray-600 mb-1">Tap to choose a photo</p>
+                  <p className="text-xs text-gray-500">Family, goals, dreams - anything that reminds you why</p>
+                  <input
+                    type="file"
+                    accept="image/*"
+                    className="hidden"
+                    onChange={(e) => {
+                      const file = e.target.files[0];
+                      if (!file) return;
+                      const reader = new FileReader();
+                      reader.onload = (ev) => {
+                        const newReason = {
+                          id: Date.now(),
+                          type: 'photo',
+                          content: ev.target.result,
+                          filename: file.name,
+                          timestamp: new Date().toISOString()
+                        };
+                        const updated = { ...whyImQuitting, reasons: [...whyImQuitting.reasons, newReason] };
+                        setWhyImQuitting(updated);
+                        localStorage.setItem('whyImQuitting', JSON.stringify(updated));
+                        showSuccess('Photo added! 📷');
+                      };
+                      reader.readAsDataURL(file);
+                    }}
+                  />
+                </label>
               </div>
 
               {/* Voice Memo Placeholder */}
@@ -5365,9 +5382,9 @@ export default function BeatTheBet() {
                           <p className="text-gray-800">{reason.content}</p>
                         )}
                         {reason.type === 'photo' && (
-                          <div className="flex items-center">
-                            <span className="text-2xl mr-2">📷</span>
-                            <span className="text-gray-700">Photo reminder</span>
+                          <div>
+                            <img src={reason.content} alt="Reminder" className="w-full rounded-lg max-h-40 object-cover" />
+                            {reason.filename && <p className="text-xs text-gray-500 mt-1">{reason.filename}</p>}
                           </div>
                         )}
                       </div>
@@ -7379,7 +7396,6 @@ Keep going! Every day counts. 💪
     <div className="min-h-screen bg-gradient-to-b from-blue-50 to-purple-50 flex items-center justify-center p-6">
       <div className="max-w-md w-full">
         <div className="text-center mb-12">
-          <div className="text-6xl mb-4">🎰 ➡️ ✅</div>
           <h1 className="text-4xl font-bold text-gray-900 mb-2">Beat the Bet</h1>
           <p className="text-gray-600">Take control of your recovery</p>
         </div>
@@ -7745,12 +7761,12 @@ Keep going! Every day counts. 💪
       // Update global state
       setUsername(profileData.username);
       setUserAgeRange(profileData.ageRange);
-      setUserCity(profileData.city);
+
       setStartDate(new Date(profileData.quitDate));
       
       localStorage.setItem('username', profileData.username);
       localStorage.setItem('userAgeRange', profileData.ageRange);
-      localStorage.setItem('userCity', profileData.city);
+
       localStorage.setItem('startDate', new Date(profileData.quitDate).toISOString());
       
       setLoading(false);
@@ -7812,38 +7828,9 @@ Keep going! Every day counts. 💪
               </select>
             </div>
 
-            {/* City */}
-            <div>
-              <label htmlFor="profile-city" className="block text-sm font-semibold text-gray-700 mb-2">
-                City <span className="text-gray-400 text-xs">(Optional)</span>
-              </label>
-              <input
-                id="profile-city"
-                name="city"
-                type="text"
-                value={profileData.city}
-                onChange={(e) => setProfileData({ ...profileData, city: e.target.value })}
-                className="w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
-                placeholder="e.g., Melbourne"
-              />
-            </div>
-
-            {/* Quit Date */}
-            <div>
-              <label htmlFor="profile-quit-date" className="block text-sm font-semibold text-gray-700 mb-2">
-                When did you last gamble? <span className="text-red-500">*</span>
-              </label>
-              <input
-                id="profile-quit-date"
-                name="quitDate"
-                type="date"
-                value={profileData.quitDate}
-                onChange={(e) => setProfileData({ ...profileData, quitDate: e.target.value })}
-                max={new Date().toISOString().split('T')[0]}
-                className="w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
-              />
-              <p className="text-xs text-gray-500 mt-1">
-                This starts your recovery timer. You can change this later in settings.
+            <div className="bg-yellow-50 border-l-4 border-yellow-500 rounded-lg p-3">
+              <p className="text-sm text-gray-700">
+                <strong>Be honest.</strong> You'll set your recovery start date in the next step. Your timer is a source of pride, not shame — every journey starts somewhere.
               </p>
             </div>
 
@@ -8240,10 +8227,7 @@ Keep going! Every day counts. 💪
     return <ProfileSetupScreen />;
   }
 
-  // Show app tour if authenticated, profile complete, but haven't seen tour
-  if (isAuthenticated && hasCompletedOnboarding && !hasSeenTour) {
-    return <AppTour />;
-  }
+  // App tour removed
 
   return (
     <div className="relative min-h-screen">
