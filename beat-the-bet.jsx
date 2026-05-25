@@ -537,12 +537,6 @@ export default function BeatTheBet() {
   
   const [onboardingStep, setOnboardingStep] = useState(0);
   
-  // App Tour State
-  const [hasSeenTour, setHasSeenTour] = useState(() => {
-    const saved = localStorage.getItem('hasSeenTour');
-    return saved === 'true';
-  });
-  
   // Tool Usage Tracking
   const [toolUsage, setToolUsage] = useState(() => {
     const saved = localStorage.getItem('toolUsage');
@@ -642,13 +636,7 @@ export default function BeatTheBet() {
     return null;
   };
   
-  // Log app open on mount
-  useEffect(() => {
-    const now = new Date().toISOString();
-    const updated = [...appOpenTimestamps, now];
-    setAppOpenTimestamps(updated);
-    localStorage.setItem('appOpenTimestamps', JSON.stringify(updated));
-  }, []); // Empty dependency - runs once on mount
+  // (duplicate useEffect removed)
 
   // Isolated Timer Component - doesn't trigger parent re-renders
 
@@ -838,7 +826,7 @@ export default function BeatTheBet() {
         { id: 'music-discovery', name: 'Music Discovery', icon: '🎵', color: 'purple' },
         { id: 'activities', name: 'Challenges', icon: '🎯', color: 'orange' },
         { id: 'chat', name: 'Community', icon: '💬', color: 'pink' },
-        { id: 'why-quitting', name: 'Why I\'m Quitting', icon: '❤️', color: 'red' },
+        { id: 'why-quitting', name: 'Why I\'m Quitting', icon: '♥', color: 'red' },
         { id: 'shop', name: 'Skill Builder', icon: '🛠️', color: 'teal' }
       ];
 
@@ -952,7 +940,6 @@ export default function BeatTheBet() {
           <div className="px-6 pt-6">
             <div className="bg-gradient-to-br from-green-50 to-emerald-50 border-2 border-green-200 rounded-2xl p-6">
               <div className="text-center">
-                <span className="text-5xl block mb-3">🎉</span>
                 <h2 className="text-2xl font-bold text-gray-900 mb-2">Welcome to Beat the Bet!</h2>
                 <p className="text-gray-700 mb-4">
                   You've taken the first step toward recovery. Every journey starts with day one.
@@ -1043,7 +1030,7 @@ export default function BeatTheBet() {
             {/* Daily Quote */}
             <div className="bg-gradient-to-br from-indigo-500 to-purple-600 rounded-xl p-6 text-white shadow-lg">
               <div className="flex items-start gap-3">
-                <span className="text-3xl">💭</span>
+
                 <div>
                   <p className="text-xs font-semibold opacity-75 uppercase tracking-wide mb-2">Today's Reminder</p>
                   <p className="text-lg font-semibold italic">"{dailyQuote}"</p>
@@ -1057,13 +1044,12 @@ export default function BeatTheBet() {
                 <div className="flex items-center justify-between">
                   <div className="flex-1">
                     <h3 className="font-bold text-gray-900 mb-1 flex items-center gap-2">
-                      <span className="text-xl">📝</span>
                       Daily Check-In
                     </h3>
                     <p className="text-sm text-gray-600">
                       {lastCheckIn === new Date().toDateString() 
                         ? '✓ Completed today - great job!' 
-                        : 'Take a moment to reflect'}
+                        : 'Take a moment to reflect — how are you feeling today?'}
                     </p>
                   </div>
                   {lastCheckIn === new Date().toDateString() ? (
@@ -1133,8 +1119,8 @@ export default function BeatTheBet() {
   };
 
   const ResetModal = () => (
-    <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
-      <div className="bg-white rounded-2xl shadow-2xl max-w-md w-full p-6">
+    <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50" onClick={(e) => e.stopPropagation()}>
+      <div className="bg-white rounded-2xl shadow-2xl max-w-md w-full p-6" onClick={(e) => e.stopPropagation()}>
         <h2 className="text-2xl font-bold text-gray-800 mb-4">Reset Your Timer?</h2>
         
         <p className="text-gray-700 mb-6">
@@ -1213,7 +1199,7 @@ export default function BeatTheBet() {
     ];
 
     const healthyDopamineActivities = [
-      { icon: '🏃', text: 'Go for a 10-minute walk right now', action: 'Move your body' },
+      { icon: '', text: 'Go for a 10-minute walk right now', action: 'Walk' },
       { icon: '🎵', text: 'Put on your favorite music and dance', action: 'Listen to music' },
       { icon: '🍎', text: 'Eat something you enjoy', action: 'Eat a snack' },
       { icon: '📞', text: 'Call or text someone who supports you', action: 'Reach out' },
@@ -1231,8 +1217,8 @@ export default function BeatTheBet() {
     };
 
     return (
-      <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50 overflow-y-auto">
-        <div className="bg-white rounded-2xl shadow-2xl max-w-2xl w-full p-6 my-8">
+      <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50 overflow-y-auto" onClick={(e) => e.stopPropagation()}>
+        <div className="bg-white rounded-2xl shadow-2xl max-w-2xl w-full p-6 my-8" onClick={(e) => e.stopPropagation()}>
           {step === 'questions' ? (
             <>
               <div className="text-center mb-6">
@@ -1779,7 +1765,7 @@ export default function BeatTheBet() {
           </div>
           <div>
             <h1 className="text-2xl font-bold">BetStop</h1>
-            <p className="text-sm opacity-90">National Self-Exclusion Register</p>
+            <p className="text-sm opacity-90">Australia's national self-exclusion register</p>
           </div>
         </div>
       </div>
@@ -1787,32 +1773,13 @@ export default function BeatTheBet() {
       <div className="flex-1 p-6">
         <div className="max-w-md mx-auto space-y-6">
           <div className="bg-white rounded-xl shadow-lg p-6">
-            <h2 className="text-xl font-bold text-gray-800 mb-4">What is BetStop?</h2>
+            <h2 className="text-xl font-bold text-gray-800 mb-4">BetStop</h2>
             <p className="text-gray-700 mb-4 leading-relaxed">
-              BetStop is a free national self-exclusion register. When you register, you'll be excluded from 
-              all licensed Australian online wagering services and mobile betting apps.
+              BetStop is Australia's national self-exclusion register, run by the Australian Government. Registering means you'll be excluded from all licensed Australian online wagering services and mobile betting apps.
             </p>
             
             <div className="bg-red-50 rounded-lg p-4 mb-6">
-              <h3 className="font-semibold text-gray-800 mb-2">What BetStop is:</h3>
-              <ul className="space-y-2 text-sm text-gray-700">
-                <li className="flex items-start">
-                  <span className="text-red-500 mr-2">✓</span>
-                  <span>Australia's national self-exclusion register, run by the Australian Government</span>
-                </li>
-                <li className="flex items-start">
-                  <span className="text-red-500 mr-2">✓</span>
-                  <span>A single registration that covers all licensed online wagering operators in Australia</span>
-                </li>
-                <li className="flex items-start">
-                  <span className="text-red-500 mr-2">✓</span>
-                  <span>Completely free — there are no fees to register or maintain your exclusion</span>
-                </li>
-                <li className="flex items-start">
-                  <span className="text-red-500 mr-2">✓</span>
-                  <span>Legally enforceable — operators are required by law to verify registrations and refuse your bets</span>
-                </li>
-              </ul>
+              <p className="text-sm text-gray-700 mb-2">A single registration covers every licensed online wagering operator in Australia — you don't need to contact them individually. It's completely free, with no fees to register or maintain your exclusion. It's also legally enforceable: operators are required by law to verify registrations and refuse bets from excluded users. Your exclusion takes effect immediately after registration.</p>
             </div>
 
             <button
@@ -2304,7 +2271,7 @@ export default function BeatTheBet() {
 
             {/* Add Activity Form */}
             {showAddActivity && (
-              <div className="bg-white rounded-xl shadow-lg p-6 border-2 border-orange-500">
+              <div className="bg-white rounded-xl shadow-lg p-6 border-2 border-orange-500" onClick={(e) => e.stopPropagation()}>
                 <div className="flex items-center justify-between mb-4">
                   <h3 className="font-bold text-gray-800">Log Activity</h3>
                   <button
@@ -2535,7 +2502,7 @@ export default function BeatTheBet() {
         </div>
 
         {showAddGoal && (
-          <div className="bg-blue-50 border-2 border-blue-200 rounded-xl p-4 mb-4">
+          <div className="bg-blue-50 border-2 border-blue-200 rounded-xl p-4 mb-4" onClick={(e) => e.stopPropagation()}>
             <h4 className="font-semibold text-gray-800 mb-3">Create New Goal</h4>
             
             {/* Icon Selector */}
@@ -2837,7 +2804,7 @@ export default function BeatTheBet() {
         </button>
 
         {showCalendar && (
-          <div className="mt-4 border-t pt-4">
+          <div className="mt-4 border-t pt-4" onClick={(e) => e.stopPropagation()}>
             <h4 className="font-semibold text-gray-800 mb-3">Select Your Next Payday</h4>
             
             {/* Month/Year Header */}
@@ -3225,7 +3192,7 @@ export default function BeatTheBet() {
               <>
                 {/* Current Savings - The Win */}
                 <div className="bg-gradient-to-br from-green-500 to-blue-500 rounded-xl shadow-lg p-6 text-white">
-                  <h3 className="text-sm opacity-90 mb-2">Money That's Staying in Your Account</h3>
+                  <h3 className="text-sm opacity-90 mb-2">Money Not Gambled</h3>
                   <p className="text-5xl font-bold mb-1">${calculateSavings(getDaysClean())}</p>
                   <p className="text-sm opacity-90">{getDaysClean()} {getDaysClean() === 1 ? 'day' : 'days'} gamble-free</p>
                 </div>
@@ -3243,7 +3210,7 @@ export default function BeatTheBet() {
                   </div>
 
                   {showLiabilityForm && (
-                    <div className="space-y-3 mb-4 p-4 bg-gray-50 rounded-lg">
+                    <div className="space-y-3 mb-4 p-4 bg-gray-50 rounded-lg" onClick={(e) => e.stopPropagation()}>
                       <input
                         type="text"
                         value={newLiability.name}
@@ -4245,7 +4212,7 @@ export default function BeatTheBet() {
         {/* Username Setup Modal */}
         {showUsernameSetup && (
           <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-6 z-50">
-            <div className="bg-white rounded-xl shadow-2xl p-6 max-w-md w-full">
+            <div className="bg-white rounded-xl shadow-2xl p-6 max-w-md w-full" onClick={(e) => e.stopPropagation()}>
               <h2 className="text-xl font-bold text-gray-800 mb-4">Choose Your Username</h2>
               <p className="text-gray-600 text-sm mb-4">
                 Pick an anonymous username. No personal info. This keeps you safe.
@@ -4392,7 +4359,7 @@ export default function BeatTheBet() {
         <div className="bg-yellow-50 border-t-2 border-yellow-500 p-3">
           <div className="max-w-2xl mx-auto">
             <p className="text-xs text-gray-700 text-center">
-              <strong>Be kind. Be supportive. No personal info. No triggers.</strong> Report harmful messages to moderators.
+              Be kind. Be supportive. Don't share personal info. Report anything harmful.
             </p>
           </div>
         </div>
@@ -4856,9 +4823,6 @@ export default function BeatTheBet() {
         case 0: // Welcome
           return (
             <div className="text-center">
-              <div className="bg-gradient-to-br from-blue-500 to-purple-600 w-24 h-24 rounded-full flex items-center justify-center mx-auto mb-6">
-                <span className="text-5xl">🛡️</span>
-              </div>
               <h1 className="text-3xl font-bold text-gray-900 mb-4">Welcome to Beat the Bet</h1>
               <p className="text-lg text-gray-700 mb-6 leading-relaxed">
                 You've taken the hardest step - deciding to quit. Let's set you up for success.
@@ -5109,9 +5073,6 @@ export default function BeatTheBet() {
         case 6: // Complete
           return (
             <div className="text-center">
-              <div className="bg-gradient-to-br from-green-500 to-emerald-600 w-24 h-24 rounded-full flex items-center justify-center mx-auto mb-6">
-                <span className="text-5xl">🎉</span>
-              </div>
               <h1 className="text-3xl font-bold text-gray-900 mb-4">You're All Set!</h1>
               <p className="text-lg text-gray-700 mb-6 leading-relaxed">
                 You've built your safety net. Now let's keep you clean.
@@ -5257,7 +5218,7 @@ export default function BeatTheBet() {
             {/* Info Banner */}
             <div className="bg-blue-50 border-l-4 border-blue-500 rounded-lg p-5">
               <p className="text-sm text-gray-700 leading-relaxed">
-                <strong>This is your anchor.</strong> When urges hit, we'll show you these reminders. Make them personal. Make them powerful. This is what you're fighting for.
+                When urges hit, we'll show you these reminders. Make them honest. This is what you're fighting for.
               </p>
             </div>
 
@@ -5666,7 +5627,7 @@ export default function BeatTheBet() {
         {/* Day Entries Modal */}
         {selectedJournalDate && (
           <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
-            <div className="bg-white rounded-2xl shadow-2xl max-w-md w-full max-h-[80vh] overflow-y-auto">
+            <div className="bg-white rounded-2xl shadow-2xl max-w-md w-full max-h-[80vh] overflow-y-auto" onClick={(e) => e.stopPropagation()}>
               <div className="p-6">
                 <div className="flex justify-between items-center mb-4">
                   <h2 className="text-xl font-bold text-gray-800">
@@ -6573,7 +6534,7 @@ export default function BeatTheBet() {
                         earned ? 'bg-yellow-100' : 'bg-gray-100 opacity-50'
                       }`}
                     >
-                      <div className="text-3xl mb-1">{earned ? badge.icon : '🔒'}</div>
+                      <div className="text-3xl mb-1">{earned ? badge.icon : '—'}</div>
                       <div className="text-xs font-semibold text-gray-700">{badge.name}</div>
                     </div>
                   );
@@ -7039,7 +7000,7 @@ Keep going! Every day counts. 💪
                   className="w-full bg-blue-500 hover:bg-blue-600 text-white rounded-lg py-3 font-semibold flex items-center justify-center gap-2 transition-colors"
                 >
                   <Download className="w-5 h-5" />
-                  Export Full Backup (JSON)
+                  Export Full Backup
                 </button>
                 <p className="text-xs text-gray-600">
                   Download all your data as JSON for complete backup
@@ -7050,7 +7011,7 @@ Keep going! Every day counts. 💪
                   className="w-full bg-green-500 hover:bg-green-600 text-white rounded-lg py-3 font-semibold flex items-center justify-center gap-2 transition-colors"
                 >
                   <Download className="w-5 h-5" />
-                  Export Summary Report (TXT)
+                  Export Summary Report
                 </button>
                 <p className="text-xs text-gray-600">
                   Download a formatted text report of your recovery progress
@@ -7064,19 +7025,9 @@ Keep going! Every day counts. 💪
                   }}
                   className="w-full bg-gray-200 hover:bg-gray-300 text-gray-800 rounded-lg py-3 font-semibold transition-colors"
                 >
-                  🚀 Restart Setup Guide
+                  Restart Setup Guide
                 </button>
 
-                <button
-                  onClick={() => {
-                    setHasSeenTour(false);
-                    localStorage.removeItem('hasSeenTour');
-                    showSuccess('Tour reset! You\'ll see it next time you reload.');
-                  }}
-                  className="w-full bg-gray-200 hover:bg-gray-300 text-gray-800 rounded-lg py-3 font-semibold transition-colors"
-                >
-                  🎓 Restart App Tour
-                </button>
               </div>
             </div>
 
@@ -7225,13 +7176,13 @@ Keep going! Every day counts. 💪
                 }}
                 className="w-full bg-blue-500 hover:bg-blue-600 text-white rounded-lg py-3 font-semibold transition-colors"
               >
-                ⚙️ Open Settings
+                Open Settings
               </button>
               <button
                 onClick={logout}
                 className="w-full bg-red-500 hover:bg-red-600 text-white rounded-lg py-3 font-semibold transition-colors"
               >
-                🚪 Log Out
+                Log Out
               </button>
             </div>
           </div>
@@ -7397,7 +7348,7 @@ Keep going! Every day counts. 💪
       <div className="max-w-md w-full">
         <div className="text-center mb-12">
           <h1 className="text-4xl font-bold text-gray-900 mb-2">Beat the Bet</h1>
-          <p className="text-gray-600">Take control of your recovery</p>
+          <p className="text-gray-600">Take back control of your life</p>
         </div>
         
         <div className="space-y-3">
@@ -7781,7 +7732,6 @@ Keep going! Every day counts. 💪
       <div className="min-h-screen bg-gradient-to-b from-blue-50 to-purple-50 flex items-center justify-center p-6">
         <div className="max-w-md w-full bg-white rounded-2xl shadow-xl p-8">
           <div className="text-center mb-8">
-            <div className="text-5xl mb-4">👋</div>
             <h1 className="text-2xl font-bold text-gray-900 mb-2">Welcome!</h1>
             <p className="text-gray-600">Let's set up your profile</p>
           </div>
@@ -7877,7 +7827,6 @@ Keep going! Every day counts. 💪
       return (
         <div className="min-h-screen bg-gray-50 flex flex-col items-center justify-center p-6">
           <div className="max-w-md w-full bg-white rounded-2xl shadow-xl p-8 text-center">
-            <div className="text-6xl mb-4">✅</div>
             <h1 className="text-2xl font-bold text-gray-900 mb-3">Check Your Email</h1>
             <p className="text-gray-600 mb-6">
               We've sent a password reset link to <strong>{email}</strong>
@@ -7909,7 +7858,6 @@ Keep going! Every day counts. 💪
         <div className="flex-1 flex items-center justify-center">
           <div className="max-w-md w-full">
             <div className="text-center mb-8">
-              <div className="text-5xl mb-4">🔐</div>
               <h1 className="text-3xl font-bold text-gray-900 mb-2">Reset Password</h1>
               <p className="text-gray-600">
                 Enter your email and we'll send you a link to reset your password
@@ -8020,7 +7968,6 @@ Keep going! Every day counts. 💪
       return (
         <div className="min-h-screen bg-gray-50 flex flex-col items-center justify-center p-6">
           <div className="max-w-md w-full bg-white rounded-2xl shadow-xl p-8 text-center">
-            <div className="text-6xl mb-4">✅</div>
             <h1 className="text-2xl font-bold text-gray-900 mb-3">Password Updated!</h1>
             <p className="text-gray-600 mb-6">
               Your password has been successfully reset. You can now log in with your new password.
@@ -8036,7 +7983,6 @@ Keep going! Every day counts. 💪
         <div className="flex-1 flex items-center justify-center">
           <div className="max-w-md w-full">
             <div className="text-center mb-8">
-              <div className="text-5xl mb-4">🔑</div>
               <h1 className="text-3xl font-bold text-gray-900 mb-2">Set New Password</h1>
               <p className="text-gray-600">Choose a strong password for your account</p>
             </div>
@@ -8115,103 +8061,6 @@ Keep going! Every day counts. 💪
     );
   };
 
-  // Simple App Tour Component
-  const AppTour = () => {
-    const [step, setStep] = useState(0);
-
-    const tourSteps = [
-      {
-        title: "Welcome to Beat the Bet! 🎉",
-        description: "Let's take a quick 30-second tour to show you around.",
-        icon: "👋",
-        highlight: null
-      },
-      {
-        title: "Your Recovery Timer ⏱️",
-        description: "This shows how long you've been gamble-free. Every second counts!",
-        icon: "⏱️",
-        highlight: "timer"
-      },
-      {
-        title: "Recovery Tools 🛠️",
-        description: "Tap 'Resources' at the bottom to access journals, savings goals, activities, and more.",
-        icon: "🛠️",
-        highlight: "resources"
-      },
-      {
-        title: "You're All Set! ✅",
-        description: "You're ready to start your recovery journey. Remember: one day at a time.",
-        icon: "🚀",
-        highlight: null
-      }
-    ];
-
-    const currentStep = tourSteps[step];
-    const isLastStep = step === tourSteps.length - 1;
-
-    const handleNext = () => {
-      if (isLastStep) {
-        // Complete tour
-        setHasSeenTour(true);
-        localStorage.setItem('hasSeenTour', 'true');
-      } else {
-        setStep(step + 1);
-      }
-    };
-
-    const handleSkip = () => {
-      setHasSeenTour(true);
-      localStorage.setItem('hasSeenTour', 'true');
-    };
-
-    return (
-      <div className="fixed inset-0 bg-black bg-opacity-75 z-50 flex items-center justify-center p-6">
-        <div className="bg-white rounded-2xl shadow-2xl max-w-md w-full p-8">
-          {/* Progress Dots */}
-          <div className="flex justify-center gap-2 mb-6">
-            {tourSteps.map((_, idx) => (
-              <div
-                key={idx}
-                className={`h-2 rounded-full transition-all ${
-                  idx === step ? 'w-8 bg-blue-600' : 'w-2 bg-gray-300'
-                }`}
-              />
-            ))}
-          </div>
-
-          {/* Content */}
-          <div className="text-center mb-8">
-            <div className="text-6xl mb-4">{currentStep.icon}</div>
-            <h2 className="text-2xl font-bold text-gray-900 mb-3">{currentStep.title}</h2>
-            <p className="text-gray-600 text-lg">{currentStep.description}</p>
-          </div>
-
-          {/* Actions */}
-          <div className="flex gap-3">
-            {!isLastStep && (
-              <button
-                onClick={handleSkip}
-                className="flex-1 bg-gray-100 hover:bg-gray-200 text-gray-700 py-3 rounded-xl font-semibold transition-colors"
-              >
-                Skip Tour
-              </button>
-            )}
-            <button
-              onClick={handleNext}
-              className="flex-1 bg-blue-600 hover:bg-blue-700 text-white py-3 rounded-xl font-semibold transition-colors"
-            >
-              {isLastStep ? "Let's Go!" : 'Next'}
-            </button>
-          </div>
-
-          {/* Step Counter */}
-          <p className="text-center text-xs text-gray-500 mt-4">
-            Step {step + 1} of {tourSteps.length}
-          </p>
-        </div>
-      </div>
-    );
-  };
 
   // Show auth screens if not authenticated
   if (!isAuthenticated) {
@@ -8227,7 +8076,6 @@ Keep going! Every day counts. 💪
     return <ProfileSetupScreen />;
   }
 
-  // App tour removed
 
   return (
     <div className="relative min-h-screen">
