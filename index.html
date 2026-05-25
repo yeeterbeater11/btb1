@@ -17,11 +17,21 @@
   <!-- Babel (JSX transpiler) -->
   <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
 
-  <!-- Recharts pinned to React 18 compatible version -->
-  <script src="https://unpkg.com/recharts@2.1.16/umd/Recharts.js"></script>
-
-  <!-- Lucide Icons (correct UMD path) -->
+  <!-- Lucide Icons -->
   <script src="https://unpkg.com/lucide@latest/dist/umd/lucide.min.js"></script>
+
+  <!-- Recharts stub: replaces all Recharts components with no-op divs -->
+  <!-- This prevents the oneOfType crash with React 18 UMD -->
+  <script>
+    window.Recharts = new Proxy({}, {
+      get: function(_, name) {
+        // Return a simple functional component stub for any Recharts component
+        return function RechartsStub(props) {
+          return null;
+        };
+      }
+    });
+  </script>
 
   <style>
     body {
@@ -39,11 +49,6 @@
 <body>
   <div id="root"></div>
 
-  <!--
-    IMPORTANT: We fetch beat-the-bet.jsx as text, strip the "export default"
-    keyword, append the ReactDOM mount call, then eval it via Babel.
-    This avoids ES module issues with Babel standalone.
-  -->
   <script>
     fetch('/beat-the-bet.jsx')
       .then(r => r.text())
@@ -59,7 +64,6 @@ const root = ReactDOM.createRoot(rootEl);
 root.render(React.createElement(BeatTheBet));
 `;
 
-        // Transform and eval via Babel
         const transformed = Babel.transform(withMount, { presets: ['react'] }).code;
         eval(transformed);
       })
