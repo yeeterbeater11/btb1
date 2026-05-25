@@ -11,17 +11,17 @@
   <!-- Tailwind CSS -->
   <script src="https://cdn.tailwindcss.com"></script>
 
-  <!-- React & ReactDOM -->
+  <!-- React & ReactDOM (18) -->
   <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
   <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
 
   <!-- Babel (JSX transpiler) -->
   <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
 
-  <!-- Recharts -->
-  <script src="https://unpkg.com/recharts@2.12.7/umd/Recharts.js"></script>
+  <!-- ✅ Recharts pinned to 2.1.16 — last version fully compatible with React 18 UMD -->
+  <script src="https://unpkg.com/recharts@2.1.16/umd/Recharts.js"></script>
 
-  <!-- ✅ CORRECTED Lucide Icons CDN path -->
+  <!-- ✅ Lucide Icons (correct UMD path) -->
   <script src="https://unpkg.com/lucide@latest/dist/umd/lucide.min.js"></script>
 
   <style>
@@ -34,7 +34,6 @@
     #root {
       min-height: 100vh;
     }
-    /* Scrollbar styling */
     ::-webkit-scrollbar { width: 6px; }
     ::-webkit-scrollbar-track { background: #1e293b; }
     ::-webkit-scrollbar-thumb { background: #475569; border-radius: 3px; }
