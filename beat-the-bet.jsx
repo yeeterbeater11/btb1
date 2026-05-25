@@ -2931,217 +2931,24 @@ export default function BeatTheBet() {
     // Memoize savings examples to prevent recalculation on every render
     const savingsExamples = React.useMemo(() => {
       const daily = dailyGamblingSpend;
-      const age = userAgeRange;
-
-      // TIER 1: Very Low Spender $1-10/day
-      if (daily > 0 && daily <= 10) {
-        if (age === '18-25') {
-          return [
-            { days: 1, item: "Coffee", emoji: "☕", price: 5 },
-            { days: 3, item: "Lunch at food court", emoji: "🍔", price: 15 },
-            { days: 7, item: "Streaming service (month)", emoji: "📺", price: 12 },
-            { days: 14, item: "Drinks with friends", emoji: "🍻", price: 40 },
-            { days: 30, item: "New t-shirt", emoji: "👕", price: 30 },
-            { days: 60, item: "Haircut", emoji: "✂️", price: 35 },
-            { days: 90, item: "Phone case + accessories", emoji: "📱", price: 50 },
-            { days: 180, item: "Second-hand console game", emoji: "🎮", price: 70 },
-          ];
-        }
-        // Default for low spenders
-        return [
-          { days: 1, item: "Coffee or lunch", emoji: "☕", price: 8 },
-          { days: 3, item: "Takeaway dinner", emoji: "🍔", price: 18 },
-          { days: 7, item: "Fuel for the car", emoji: "⛽", price: 50 },
-          { days: 14, item: "Kids' haircuts", emoji: "✂️", price: 40 },
-          { days: 30, item: "School lunch money (month)", emoji: "🎒", price: 100 },
-          { days: 60, item: "Kids' birthday present", emoji: "🎁", price: 80 },
-          { days: 90, item: "Family movie night", emoji: "🎬", price: 120 },
-          { days: 180, item: "Kids' sports shoes", emoji: "👟", price: 150 },
-        ];
-      }
-
-      // TIER 2: Low Spender $11-20/day
-      if (daily > 10 && daily <= 20) {
-        if (age === '18-25') {
-          return [
-            { days: 2, item: "Uber Eats", emoji: "🍔", price: 30 },
-            { days: 5, item: "Night out drinks", emoji: "🍻", price: 80 },
-            { days: 7, item: "New jeans or shirt", emoji: "👕", price: 100 },
-            { days: 14, item: "Concert ticket", emoji: "🎵", price: 150 },
-            { days: 21, item: "Sneakers on sale", emoji: "👟", price: 200 },
-            { days: 30, item: "Second-hand bike", emoji: "🚲", price: 300 },
-            { days: 60, item: "Phone screen repair", emoji: "📱", price: 400 },
-            { days: 90, item: "Weekend camping trip", emoji: "🏕️", price: 600 },
-          ];
-        }
-        return [
-          { days: 2, item: "Family takeaway", emoji: "🍔", price: 45 },
-          { days: 5, item: "Weekly groceries", emoji: "🛒", price: 120 },
-          { days: 10, item: "School shoes", emoji: "👟", price: 120 },
-          { days: 14, item: "Tank of petrol", emoji: "⛽", price: 100 },
-          { days: 21, item: "Kids' sports registration", emoji: "⚽", price: 180 },
-          { days: 30, item: "Internet bill", emoji: "💻", price: 80 },
-          { days: 60, item: "School uniforms", emoji: "🎒", price: 400 },
-          { days: 90, item: "Family Zoo tickets", emoji: "🦁", price: 200 },
-        ];
-      }
-
-      // TIER 3: Medium-Low Spender $21-40/day
-      if (daily > 20 && daily <= 40) {
-        if (age === '18-25') {
-          return [
-            { days: 3, item: "Uber Eats few times", emoji: "🍔", price: 100 },
-            { days: 5, item: "Nice restaurant meal", emoji: "🍽️", price: 150 },
-            { days: 7, item: "New shoes", emoji: "👟", price: 220 },
-            { days: 14, item: "Festival ticket", emoji: "🎪", price: 350 },
-            { days: 21, item: "New phone case & AirPods", emoji: "📱", price: 500 },
-            { days: 30, item: "Tattoo session", emoji: "✨", price: 800 },
-            { days: 60, item: "Second-hand MacBook", emoji: "💻", price: 1500 },
-            { days: 90, item: "Bali flight + hostel", emoji: "✈️", price: 2000 },
-          ];
-        }
-        if (age === '26-35') {
-          return [
-            { days: 3, item: "Date night", emoji: "🍽️", price: 120 },
-            { days: 7, item: "Groceries for week", emoji: "🛒", price: 200 },
-            { days: 14, item: "Gym membership (3 months)", emoji: "🏋️", price: 300 },
-            { days: 21, item: "Work clothes", emoji: "👔", price: 400 },
-            { days: 30, item: "Kitchen appliance", emoji: "🔌", price: 600 },
-            { days: 60, item: "Weekend away", emoji: "🏖️", price: 1200 },
-            { days: 90, item: "New TV", emoji: "📺", price: 1800 },
-            { days: 180, item: "Engagement ring deposit", emoji: "💍", price: 3000 },
-          ];
-        }
-        return [
-          { days: 3, item: "Full grocery shop", emoji: "🛒", price: 180 },
-          { days: 7, item: "Kids' back to school", emoji: "🎒", price: 350 },
-          { days: 14, item: "Family restaurant", emoji: "🍽️", price: 200 },
-          { days: 21, item: "Phone bill (3 months)", emoji: "📱", price: 150 },
-          { days: 30, item: "Power bill", emoji: "💡", price: 500 },
-          { days: 45, item: "Kids' birthday party", emoji: "🎉", price: 600 },
-          { days: 60, item: "School laptop", emoji: "💻", price: 1000 },
-          { days: 90, item: "Movie World passes", emoji: "🎡", price: 600 },
-        ];
-      }
-
-      // TIER 4: Medium Spender $41-70/day  
-      if (daily > 40 && daily <= 70) {
-        if (age === '18-25') {
-          return [
-            { days: 3, item: "New outfit", emoji: "👕", price: 200 },
-            { days: 5, item: "Weekend partying", emoji: "🍻", price: 300 },
-            { days: 7, item: "New sneakers", emoji: "👟", price: 350 },
-            { days: 14, item: "AirPods Pro", emoji: "🎧", price: 400 },
-            { days: 21, item: "iPad", emoji: "📱", price: 800 },
-            { days: 30, item: "PS5 + games", emoji: "🎮", price: 1000 },
-            { days: 60, item: "Bali week-long trip", emoji: "✈️", price: 2500 },
-            { days: 90, item: "Gaming PC build", emoji: "💻", price: 4000 },
-          ];
-        }
-        if (age === '26-35') {
-          return [
-            { days: 5, item: "Nice dinner for two", emoji: "🍽️", price: 250 },
-            { days: 7, item: "Weekly groceries", emoji: "🛒", price: 300 },
-            { days: 14, item: "Date weekend away", emoji: "🏖️", price: 800 },
-            { days: 21, item: "New work wardrobe", emoji: "👔", price: 1000 },
-            { days: 30, item: "Bedroom furniture", emoji: "🛏️", price: 1500 },
-            { days: 60, item: "New iPhone", emoji: "📱", price: 2000 },
-            { days: 90, item: "Gold Coast holiday", emoji: "✈️", price: 4000 },
-            { days: 180, item: "Used car deposit", emoji: "🚗", price: 8000 },
-          ];
-        }
-        return [
-          { days: 3, item: "Family groceries", emoji: "🛒", price: 250 },
-          { days: 7, item: "School fees payment", emoji: "🎓", price: 600 },
-          { days: 14, item: "Family nice dinner", emoji: "🍽️", price: 300 },
-          { days: 21, item: "Rates payment", emoji: "🏠", price: 800 },
-          { days: 30, item: "Kids' laptop", emoji: "💻", price: 1200 },
-          { days: 45, item: "Washing machine", emoji: "🔌", price: 1500 },
-          { days: 60, item: "Family holiday savings", emoji: "✈️", price: 3000 },
-          { days: 90, item: "Lounge suite", emoji: "🛋️", price: 4000 },
-        ];
-      }
-
-      // TIER 5: High Spender $71-120/day
-      if (daily > 70 && daily <= 120) {
-        if (age === '18-25') {
-          return [
-            { days: 3, item: "Weekend getaway", emoji: "🏖️", price: 400 },
-            { days: 5, item: "Designer sneakers", emoji: "👟", price: 500 },
-            { days: 7, item: "New iPhone", emoji: "📱", price: 1200 },
-            { days: 14, item: "MacBook Air", emoji: "💻", price: 2000 },
-            { days: 21, item: "Thailand trip", emoji: "✈️", price: 3000 },
-            { days: 30, item: "Gaming setup", emoji: "🎮", price: 4000 },
-            { days: 60, item: "Europe trip", emoji: "🌍", price: 6000 },
-            { days: 90, item: "Motorcycle", emoji: "🏍️", price: 8000 },
-          ];
-        }
-        if (age === '26-35') {
-          return [
-            { days: 3, item: "Luxury date night", emoji: "🍽️", price: 350 },
-            { days: 7, item: "Weekend luxury hotel", emoji: "🏨", price: 800 },
-            { days: 14, item: "Designer outfit", emoji: "👔", price: 1500 },
-            { days: 21, item: "Premium furniture piece", emoji: "🛋️", price: 2500 },
-            { days: 30, item: "Engagement ring", emoji: "💍", price: 4000 },
-            { days: 60, item: "Bali luxury trip", emoji: "✈️", price: 6000 },
-            { days: 90, item: "Wedding photographer deposit", emoji: "📸", price: 8000 },
-            { days: 180, item: "House deposit start", emoji: "🏠", price: 15000 },
-          ];
-        }
-        return [
-          { days: 3, item: "Quality family groceries", emoji: "🛒", price: 350 },
-          { days: 7, item: "Private school fees (term)", emoji: "🎓", price: 1200 },
-          { days: 14, item: "Family iPad Pro", emoji: "💻", price: 1800 },
-          { days: 21, item: "Quarterly rates", emoji: "🏠", price: 1200 },
-          { days: 30, item: "New fridge", emoji: "🔌", price: 2500 },
-          { days: 45, item: "Dining table set", emoji: "🛋️", price: 3500 },
-          { days: 60, item: "Family Fiji holiday", emoji: "✈️", price: 8000 },
-          { days: 90, item: "Deck/patio addition", emoji: "🏡", price: 12000 },
-        ];
-      }
-
-      // TIER 6: Very High Spender $121-200/day
-      if (daily > 120 && daily <= 200) {
-        if (age === '26-35') {
-          return [
-            { days: 5, item: "Designer watch", emoji: "⌚", price: 1000 },
-            { days: 7, item: "Premium laptop", emoji: "💻", price: 3000 },
-            { days: 14, item: "Luxury weekend escape", emoji: "🏨", price: 2500 },
-            { days: 21, item: "Designer furniture", emoji: "🛋️", price: 5000 },
-            { days: 30, item: "Europe trip", emoji: "✈️", price: 8000 },
-            { days: 60, item: "Wedding rings", emoji: "💍", price: 12000 },
-            { days: 90, item: "Car deposit", emoji: "🚗", price: 18000 },
-            { days: 180, item: "House deposit contribution", emoji: "🏠", price: 35000 },
-          ];
-        }
-        return [
-          { days: 5, item: "Family fine dining", emoji: "🍽️", price: 800 },
-          { days: 7, item: "Private school term fees", emoji: "🎓", price: 2000 },
-          { days: 14, item: "Family MacBooks", emoji: "💻", price: 4000 },
-          { days: 21, item: "Hot water + solar", emoji: "🔌", price: 6000 },
-          { days: 30, item: "Kitchen renovation start", emoji: "🔨", price: 8000 },
-          { days: 45, item: "Family Europe tickets", emoji: "✈️", price: 12000 },
-          { days: 60, item: "Bathroom renovation", emoji: "🏡", price: 15000 },
-          { days: 90, item: "Car upgrade", emoji: "🚗", price: 20000 },
-        ];
-      }
-
-      // TIER 7: Extreme Spender $201+/day
-      if (daily > 200) {
-        return [
-          { days: 3, item: "Luxury weekend", emoji: "🏨", price: 1500 },
-          { days: 7, item: "Designer laptop + phone", emoji: "💻", price: 4000 },
-          { days: 14, item: "Premium furniture set", emoji: "🛋️", price: 8000 },
-          { days: 21, item: "Family overseas trip", emoji: "✈️", price: 12000 },
-          { days: 30, item: "Minor renovation", emoji: "🔨", price: 15000 },
-          { days: 60, item: "New car outright", emoji: "🚗", price: 35000 },
-          { days: 90, item: "Major home renovation", emoji: "🏡", price: 50000 },
-          { days: 180, item: "Investment property deposit", emoji: "🏘️", price: 100000 },
-        ];
-      }
-
-      return [];
-    }, [dailyGamblingSpend, userAgeRange]);
+      if (daily <= 0) return [];
+      const c = (amount) => Math.ceil(amount / daily);
+      return [
+        { label: 'One week of groceries', days: c(150), amount: 150, category: 'essentials', description: "A full week of food on the table — paid for by money that stayed in your account." },
+        { label: 'One month of phone bill', days: c(60), amount: 60, category: 'bills', description: "Your phone bill covered without stress." },
+        { label: 'One electricity bill', days: c(300), amount: 300, category: 'bills', description: "A full power bill paid — one less thing to worry about." },
+        { label: 'One month of internet', days: c(80), amount: 80, category: 'bills', description: "Connected without it costing you sleep." },
+        { label: 'Credit card minimum — one month', days: c(200), amount: 200, category: 'debt', description: "One month's minimum payment covered — and you're ahead." },
+        { label: 'Emergency fund started ($500)', days: c(500), amount: 500, category: 'savings', description: "Your first real safety net. When something breaks, you're covered." },
+        { label: 'Car registration', days: c(900), amount: 900, category: 'bills', description: "Rego paid without scrambling. Just done." },
+        { label: 'Emergency fund solid ($1,000)', days: c(1000), amount: 1000, category: 'savings', description: "$1,000 sitting there. A car repair, a medical bill — handled." },
+        { label: 'Pay off $2,000 of debt', days: c(2000), amount: 2000, category: 'debt', description: "$2,000 of debt gone. Interest you'll never pay. Real weight off." },
+        { label: 'Pay off a personal loan ($5,000)', days: c(5000), amount: 5000, category: 'debt', description: "Loan closed. A direct debit that disappears from your account forever." },
+        { label: 'Six-month emergency fund ($5,000)', days: c(5000), amount: 5000, category: 'savings', description: "Six months of expenses covered. This is the level where life stops feeling precarious." },
+        { label: 'Pay off $10,000 of debt', days: c(10000), amount: 10000, category: 'debt', description: "A serious debt cleared. This is what financial recovery actually looks like." },
+        { label: 'House deposit contribution ($10,000)', days: c(10000), amount: 10000, category: 'future', description: "$10,000 toward a deposit. Real progress toward owning something that's yours." },
+      ].sort((a, b) => a.days - b.days);
+    }, [dailyGamblingSpend]);
 
     return (
       <div className="flex flex-col min-h-screen bg-gray-50 pb-20">
@@ -3267,73 +3074,53 @@ export default function BeatTheBet() {
                   )}
                 </div>
 
-                {/* What This Actually Means */}
+                {/* Savings Milestones */}
                 <div className="bg-white rounded-xl shadow-md p-6">
-                  <h3 className="font-bold text-gray-800 mb-2">What you can afford right now</h3>
-                  <p className="text-sm text-gray-600 mb-4">At {getDaysClean()} days clean, here's what you've earned{userAgeRange === '18-25' ? ' for yourself' : userAgeRange === '26-35' ? ' for your future' : ' for your family'}.</p>
+                  <h3 className="font-bold text-gray-800 mb-1">Your savings milestones</h3>
+                  <p className="text-sm text-gray-600 mb-4">Money staying in your account — not going out.</p>
                   <div className="space-y-3">
-                    {savingsExamples
-                      .filter((example) => {
-                        // Show items where the required days are <= current days clean
-                        // This shows progressively more expensive items as they save longer
-                        return example.days <= getDaysClean();
-                      })
-                      .slice(-8) // Show the most recent 8 affordable items
-                      .map((example, idx) => {
-                        const savedAmount = calculateSavings(getDaysClean());
-                        return (
-                          <div key={idx} className="flex items-center justify-between p-4 bg-green-50 rounded-lg border-2 border-green-500">
-                            <div className="flex items-center gap-3">
-                              <span className="text-2xl">{example.emoji}</span>
-                              <div>
-                                <p className="font-semibold text-gray-800">{example.item}</p>
-                                <p className="text-xs text-gray-500">Unlocked at {example.days} days (${example.price})</p>
+                    {savingsExamples.map((milestone, idx) => {
+                      const totalSaved = parseFloat(calculateSavings(getDaysClean()));
+                      const isReached = totalSaved >= milestone.amount;
+                      const daysUntil = Math.max(0, milestone.days - getDaysClean());
+                      const cats = {
+                        essentials: { bg: 'bg-green-50', border: 'border-green-400', badge: 'bg-green-100 text-green-700', bar: 'bg-green-400', label: 'Essentials' },
+                        bills:      { bg: 'bg-blue-50',  border: 'border-blue-400',  badge: 'bg-blue-100 text-blue-700',  bar: 'bg-blue-400',  label: 'Bills' },
+                        debt:       { bg: 'bg-orange-50',border: 'border-orange-400',badge: 'bg-orange-100 text-orange-700',bar: 'bg-orange-400',label: 'Debt' },
+                        savings:    { bg: 'bg-purple-50',border: 'border-purple-400',badge: 'bg-purple-100 text-purple-700',bar: 'bg-purple-400',label: 'Savings' },
+                        future:     { bg: 'bg-indigo-50',border: 'border-indigo-400',badge: 'bg-indigo-100 text-indigo-700',bar: 'bg-indigo-400',label: 'Future' },
+                      };
+                      const c = cats[milestone.category];
+                      const progress = Math.min((totalSaved / milestone.amount) * 100, 100);
+                      return (
+                        <div key={idx} className={`border-l-4 ${c.border} ${isReached ? c.bg : 'bg-gray-50'} rounded-lg p-4`}>
+                          <div className="flex items-start justify-between gap-2 mb-2">
+                            <div className="flex-1">
+                              <div className="flex items-center gap-2 mb-1 flex-wrap">
+                                <span className={`text-xs font-semibold px-2 py-0.5 rounded-full ${c.badge}`}>{c.label}</span>
+                                {isReached && <span className="text-xs font-bold text-green-600">Reached</span>}
                               </div>
+                              <p className={`font-semibold text-sm ${isReached ? 'text-gray-900' : 'text-gray-500'}`}>{milestone.label}</p>
+                              {isReached
+                                ? <p className="text-xs text-gray-600 mt-1">{milestone.description}</p>
+                                : <p className="text-xs text-gray-400 mt-1">{daysUntil} more day{daysUntil !== 1 ? 's' : ''} away</p>
+                              }
                             </div>
-                            <div className="text-right">
-                              <p className="text-xs text-gray-600 mb-1">You've saved</p>
-                              <p className="text-xl font-bold text-green-600">${savedAmount}</p>
-                            </div>
+                            <p className={`text-lg font-bold flex-shrink-0 ${isReached ? 'text-green-600' : 'text-gray-300'}`}>${milestone.amount.toLocaleString()}</p>
                           </div>
-                        );
-                      })}
-                    {savingsExamples.filter((example) => example.days <= getDaysClean()).length === 0 && (
-                      <p className="text-gray-500 text-center py-4">Keep going! Items will unlock as you stay clean.</p>
+                          <div className="w-full bg-gray-200 rounded-full h-1.5">
+                            <div className={`h-1.5 rounded-full transition-all ${isReached ? 'bg-green-500' : c.bar}`} style={{ width: `${progress}%` }} />
+                          </div>
+                        </div>
+                      );
+                    })}
+                    {savingsExamples.length === 0 && (
+                      <p className="text-gray-500 text-center py-4 text-sm">Enter your daily spend above to see your milestones.</p>
                     )}
                   </div>
                 </div>
 
-                {/* What's Coming Next */}
-                {savingsExamples.filter((example) => example.days > getDaysClean()).length > 0 && (
-                  <div className="bg-white rounded-xl shadow-md p-6">
-                    <h3 className="font-bold text-gray-800 mb-2">Coming soon if you stay clean...</h3>
-                    <p className="text-sm text-gray-600 mb-4">Keep going to unlock these</p>
-                    <div className="space-y-3">
-                      {savingsExamples
-                        .filter((example) => example.days > getDaysClean())
-                        .slice(0, 5) // Show next 5 items
-                        .map((example, idx) => {
-                          const daysUntil = example.days - getDaysClean();
-                          return (
-                            <div key={idx} className="flex items-center justify-between p-4 bg-gray-50 rounded-lg opacity-75">
-                              <div className="flex items-center gap-3">
-                                <span className="text-2xl grayscale">{example.emoji}</span>
-                                <div>
-                                  <p className="font-semibold text-gray-800">{example.item}</p>
-                                  <p className="text-xs text-gray-500">${example.price} - {daysUntil} more day{daysUntil !== 1 ? 's' : ''}</p>
-                                </div>
-                              </div>
-                              <div className="text-right">
-                                <p className="text-lg font-bold text-gray-400">${example.price}</p>
-                              </div>
-                            </div>
-                          );
-                        })}
-                    </div>
-                  </div>
-                )}
-
-                {/* The Real Message */}
+                                {/* The Real Message */}
                 <div className="bg-blue-50 border-l-4 border-blue-500 rounded-lg p-5">
                   <p className="text-sm text-gray-700 leading-relaxed mb-3">
                     <strong>This isn't about what you've lost.</strong>
