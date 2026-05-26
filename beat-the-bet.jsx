@@ -5588,7 +5588,7 @@ export default function BeatTheBet() {
         </div>
       </div>
     );
-  });
+  };
 
   const MindfulnessPage = () => (
     <div className="flex flex-col min-h-screen bg-gray-50 pb-20">
