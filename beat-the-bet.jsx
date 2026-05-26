@@ -2787,7 +2787,33 @@ export default function BeatTheBet() {
 
             {/* Intro */}
             <div className="bg-blue-50 border-l-4 border-blue-500 rounded-lg p-4">
-              <p className="text-sm text-gray-700">Add your real bills and debts. This page is a reminder of what staying clean actually protects — not imaginary savings, but the real things you need to pay.</p>
+              <p className="text-sm text-gray-700">Add your real bills and debts. This is a reminder of what staying clean actually protects. Enter what you used to spend daily and we'll show you how close you are to covering each one.</p>
+            </div>
+
+            {/* Daily spend — powers the "days away" calculation */}
+            <div className="bg-white rounded-xl shadow-md p-5" onClick={(e) => e.stopPropagation()}>
+              <h3 className="font-bold text-gray-800 mb-1">What did you spend daily on gambling?</h3>
+              <p className="text-xs text-gray-500 mb-3">Optional — used to show how many days of not gambling covers each liability.</p>
+              <div className="flex items-center gap-3">
+                <div className="flex items-center gap-1 border-2 border-gray-300 rounded-lg px-3 focus-within:border-green-500 focus-within:ring-2 focus-within:ring-green-200">
+                  <span className="text-gray-500 font-semibold">$</span>
+                  <input
+                    ref={dailySpendInputRef}
+                    type="number"
+                    defaultValue={dailyGamblingSpend || ''}
+                    placeholder="0"
+                    min="0"
+                    className="w-24 text-2xl font-bold py-2 focus:outline-none text-center bg-transparent"
+                  />
+                  <span className="text-gray-400 text-sm">/ day</span>
+                </div>
+                <button
+                  onClick={handleSaveDailySpend}
+                  className="flex-1 bg-green-500 hover:bg-green-600 text-white rounded-lg py-3 font-semibold transition-colors"
+                >
+                  {dailyGamblingSpend > 0 ? 'Update' : 'Set Amount'}
+                </button>
+              </div>
             </div>
 
                 {/* My Liabilities */}
@@ -2911,7 +2937,7 @@ export default function BeatTheBet() {
                                   {isReached && milestone.description
                                     ? <p className="text-xs text-gray-600 mt-0.5">{milestone.description}</p>
                                     : !isReached && daysUntil !== null
-                                    ? <p className="text-xs text-gray-400 mt-0.5">{daysUntil} more day{daysUntil !== 1 ? 's' : ''} away</p>
+                                    ? <p className="text-xs text-gray-400 mt-0.5">{daysUntil} day{daysUntil !== 1 ? 's' : ''} of not gambling covers this</p>
                                     : null
                                   }
                                 </div>
