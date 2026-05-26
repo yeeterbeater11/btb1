@@ -298,13 +298,73 @@ const supabase = (() => {
 
 export default function BeatTheBet() {
   // Admin access
+  const [isAdminUser, setIsAdminUser] = React.useState(false);
+  const [adminCheckDone, setAdminCheckDone] = React.useState(false);
+
+  // Admin panel data - lives in parent so it survives AdminPanel remounts
+  const [adminFlaggedMessages, setAdminFlaggedMessages] = React.useState([]);
+  const [adminUserStats, setAdminUserStats] = React.useState(null);
+  const [adminLoading, setAdminLoading] = React.useState(false);
+  const [adminLoadError, setAdminLoadError] = React.useState('');
   const [adminEmails, setAdminEmails] = React.useState(() => {
     const saved = localStorage.getItem('adminEmails');
     return saved ? JSON.parse(saved) : ['beatthebetadmin@gmail.com'];
   });
 
-  const [isAdminUser, setIsAdminUser] = React.useState(false);
-  const [adminCheckDone, setAdminCheckDone] = React.useState(false);
+  const loadAdminData = React.useCallback(async () => {
+    setAdminLoading(true);
+    setAdminLoadError('');
+    const session = supabase.getSession();
+    if (!session) { setAdminLoading(false); return; }
+    const headers = {
+      'apikey': SUPABASE_ANON_KEY,
+      'Authorization': `Bearer ${session.access_token}`
+    };
+
+    const withTimeout = (promise, ms, label) => Promise.race([
+      promise,
+      new Promise((_, reject) => setTimeout(() => reject(new Error(`${label} timed out`)), ms))
+    ]);
+
+    try {
+      const [msgsResult, profilesResult, adminsResult] = await Promise.allSettled([
+        withTimeout(
+          fetch(`${SUPABASE_URL}/rest/v1/messages?flagged=eq.true&order=created_at.desc&limit=100`, { headers })
+            .then(async r => ({ status: r.status, data: await r.json() })),
+          5000, 'messages'
+        ),
+        withTimeout(
+          fetch(`${SUPABASE_URL}/rest/v1/profiles?select=id,username,created_at,points,level&order=created_at.desc&limit=100`, { headers })
+            .then(async r => ({ status: r.status, data: await r.json() })),
+          5000, 'profiles'
+        ),
+        withTimeout(
+          fetch(`${SUPABASE_URL}/rest/v1/admins?select=email,added_at&order=added_at.asc`, { headers })
+            .then(async r => ({ status: r.status, data: await r.json() })),
+          5000, 'admins'
+        )
+      ]);
+
+      if (msgsResult.status === 'fulfilled' && msgsResult.value.status === 200) {
+        setAdminFlaggedMessages(Array.isArray(msgsResult.value.data) ? msgsResult.value.data : []);
+      }
+      if (profilesResult.status === 'fulfilled' && profilesResult.value.status === 200) {
+        const users = profilesResult.value.data;
+        setAdminUserStats({ total: Array.isArray(users) ? users.length : 0, users: Array.isArray(users) ? users : [] });
+      }
+      if (adminsResult.status === 'fulfilled' && adminsResult.value.status === 200) {
+        const admins = adminsResult.value.data;
+        if (Array.isArray(admins)) {
+          setAdminEmails(admins.map(a => a.email));
+          localStorage.setItem('adminEmails', JSON.stringify(admins.map(a => a.email)));
+        }
+      }
+    } catch (e) {
+      setAdminLoadError(e.message);
+    } finally {
+      setAdminLoading(false);
+    }
+  }, []);
 
   const checkAdminStatus = React.useCallback(async () => {
     const session = supabase.getSession();
@@ -8243,116 +8303,22 @@ Keep going! Every day counts. 💪
 
 
   const AdminPanel = () => {
-    const [flaggedMessages, setFlaggedMessages] = React.useState([]);
-    const [userStats, setUserStats] = React.useState(null);
-    const [loading, setLoading] = React.useState(false);
-    const [loadError, setLoadError] = React.useState('');
     const [newAdminEmail, setNewAdminEmail] = React.useState('');
     const [activeAdminTab, setActiveAdminTab] = React.useState('messages');
 
+    // Use parent-level state so data survives remounts
+    const flaggedMessages = adminFlaggedMessages;
+    const userStats = adminUserStats;
+    const loading = adminLoading;
+    const loadError = adminLoadError;
+    const setFlaggedMessages = setAdminFlaggedMessages;
+
     React.useEffect(() => {
-      console.log('[Admin] Panel mounted, loading data...');
-      loadAdminData();
-      return () => console.log('[Admin] Panel unmounted');
+      // Only load if we don't already have data
+      if (!adminUserStats && !adminLoading) {
+        loadAdminData();
+      }
     }, []);
-
-    const loadAdminData = async () => {
-      setLoading(true);
-      setLoadError('');
-      const session = supabase.getSession();
-      if (!session) {
-        setLoading(false);
-        setLoadError('Not logged in.');
-        return;
-      }
-      const token = session.access_token;
-      const headers = { 'apikey': SUPABASE_ANON_KEY, 'Authorization': `Bearer ${token}` };
-
-      // Safety timeout
-      const timeout = setTimeout(() => {
-        setLoading(false);
-        setLoadError('Request timed out. Check your connection and try again.');
-      }, 8000);
-
-      try {
-        // Flagged messages
-        console.log('[Admin] fetching flagged messages...');
-        const msgRes = await fetch(
-          `${SUPABASE_URL}/rest/v1/messages?flagged=eq.true&order=created_at.desc&limit=100`,
-          { headers }
-        );
-        const msgText = await msgRes.text();
-        console.log('[Admin] messages response:', msgRes.status, msgText.slice(0, 200));
-        if (msgRes.ok) {
-          const msgs = JSON.parse(msgText);
-          setFlaggedMessages(Array.isArray(msgs) ? msgs : []);
-        } else {
-          setFlaggedMessages([]);
-          setLoadError(`Messages fetch failed (${msgRes.status}): ${msgText.slice(0, 100)}`);
-        }
-
-        // Run profiles and admins fetches in parallel with individual timeouts
-        // so one failing fetch doesn't hang the whole panel
-        const withTimeout = (promise, ms, label) => Promise.race([
-          promise,
-          new Promise((_, reject) => setTimeout(() => reject(new Error(`${label} timed out after ${ms}ms`)), ms))
-        ]);
-
-        const [profilesResult, adminsResult] = await Promise.allSettled([
-          withTimeout(
-            fetch(`${SUPABASE_URL}/rest/v1/profiles?select=id,username,created_at,points,level&order=created_at.desc&limit=100`, { headers })
-              .then(async r => ({ status: r.status, text: await r.text() })),
-            5000, 'profiles'
-          ),
-          withTimeout(
-            fetch(`${SUPABASE_URL}/rest/v1/admins?select=email,added_at&order=added_at.asc`, { headers })
-              .then(async r => ({ status: r.status, text: await r.text() })),
-            5000, 'admins'
-          )
-        ]);
-
-        // Handle profiles
-        if (profilesResult.status === 'fulfilled') {
-          const { status, text } = profilesResult.value;
-          console.log('[Admin] profiles response:', status, text.slice(0, 200));
-          if (status === 200) {
-            const users = JSON.parse(text);
-            setUserStats({ total: Array.isArray(users) ? users.length : 0, users: Array.isArray(users) ? users : [] });
-          } else {
-            console.warn('[Admin] profiles fetch failed:', status, text.slice(0, 100));
-            setUserStats({ total: 0, users: [] });
-          }
-        } else {
-          console.warn('[Admin] profiles fetch rejected:', profilesResult.reason?.message);
-          setUserStats({ total: 0, users: [] });
-        }
-
-        // Handle admins
-        if (adminsResult.status === 'fulfilled') {
-          const { status, text } = adminsResult.value;
-          console.log('[Admin] admins response:', status, text.slice(0, 200));
-          if (status === 200) {
-            const admins = JSON.parse(text);
-            if (Array.isArray(admins)) {
-              setAdminEmails(admins.map(a => a.email));
-              localStorage.setItem('adminEmails', JSON.stringify(admins.map(a => a.email)));
-            }
-          }
-        } else {
-          console.warn('[Admin] admins fetch rejected:', adminsResult.reason?.message);
-        }
-
-        console.log('[Admin] all fetches complete');
-      } catch (e) {
-        console.error('Admin load error:', e);
-        setLoadError(`Error: ${e.message}`);
-        setFlaggedMessages([]);
-        setUserStats({ total: 0, users: [] });
-      } finally {
-        clearTimeout(timeout);
-        setLoading(false);
-      }
-    };
 
     const approveMessage = async (msg) => {
       const session = supabase.getSession();
@@ -8379,68 +8345,35 @@ Keep going! Every day counts. 💪
       const trimmed = newAdminEmail.trim().toLowerCase();
       if (!trimmed || !validators.email(trimmed)) { showError('Enter a valid email.'); return; }
       if (adminEmails.includes(trimmed)) { showError('That email is already an admin.'); return; }
-
       const session = supabase.getSession();
       try {
-        // Look up the user_id for this email from profiles
-        // (user must have signed up already)
-        const lookupRes = await fetch(
-          `${SUPABASE_URL}/rest/v1/profiles?select=id&limit=1`,
-          {
-            headers: {
-              'apikey': SUPABASE_ANON_KEY,
-              'Authorization': `Bearer ${session.access_token}`
-            }
-          }
-        );
-
         const res = await fetch(`${SUPABASE_URL}/rest/v1/admins`, {
           method: 'POST',
-          headers: {
-            'apikey': SUPABASE_ANON_KEY,
-            'Authorization': `Bearer ${session.access_token}`,
-            'Content-Type': 'application/json',
-            'Prefer': 'return=representation'
-          },
+          headers: { 'apikey': SUPABASE_ANON_KEY, 'Authorization': `Bearer ${session.access_token}`, 'Content-Type': 'application/json', 'Prefer': 'return=representation' },
           body: JSON.stringify({ email: trimmed })
         });
-        if (!res.ok) {
-          const err = await res.json().catch(() => ({}));
-          showError(err.message || 'Failed to add admin. Make sure the user has signed up first.');
-          return;
-        }
+        if (!res.ok) { const err = await res.json().catch(() => ({})); showError(err.message || 'Failed to add admin.'); return; }
         const updated = [...adminEmails, trimmed];
         setAdminEmails(updated);
         localStorage.setItem('adminEmails', JSON.stringify(updated));
         setNewAdminEmail('');
-        showSuccess(`${trimmed} added. Note: their user_id will be linked when they next log in.`);
-      } catch (e) {
-        showError('Failed to add admin.');
-      }
+        showSuccess(`${trimmed} added as admin.`);
+      } catch (e) { showError('Failed to add admin.'); }
     };
 
     const removeAdminEmail = async (email) => {
       const session = supabase.getSession();
-      if (session && session.user.email.toLowerCase() === email.toLowerCase()) {
-        showError("You can't remove yourself.");
-        return;
-      }
+      if (session && session.user.email.toLowerCase() === email.toLowerCase()) { showError("You can't remove yourself."); return; }
       try {
-        const res = await fetch(
-          `${SUPABASE_URL}/rest/v1/admins?email=eq.${encodeURIComponent(email)}`,
-          {
-            method: 'DELETE',
-            headers: { 'apikey': SUPABASE_ANON_KEY, 'Authorization': `Bearer ${session.access_token}` }
-          }
-        );
-        if (!res.ok) { showError('Failed to remove admin.'); return; }
+        await fetch(`${SUPABASE_URL}/rest/v1/admins?email=eq.${encodeURIComponent(email)}`, {
+          method: 'DELETE',
+          headers: { 'apikey': SUPABASE_ANON_KEY, 'Authorization': `Bearer ${session.access_token}` }
+        });
         const updated = adminEmails.filter(e => e !== email);
         setAdminEmails(updated);
         localStorage.setItem('adminEmails', JSON.stringify(updated));
         showSuccess('Admin removed.');
-      } catch (e) {
-        showError('Failed to remove admin.');
-      }
+      } catch (e) { showError('Failed to remove admin.'); }
     };
 
     const formatDate = (ts) => new Date(ts).toLocaleDateString('en-AU', { day: 'numeric', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' });
@@ -8452,38 +8385,54 @@ Keep going! Every day counts. 💪
           <h1 className="text-2xl font-bold">Admin Panel</h1>
           <p className="text-sm opacity-70">Beat the Bet — moderation & management</p>
         </div>
+
         <div className="bg-white border-b border-gray-200 px-4 py-3">
           <div className="flex gap-2">
-            {[{ id: 'messages', label: `Flagged (${flaggedMessages.length})` }, { id: 'users', label: `Users (${userStats?.total || 0})` }, { id: 'admins', label: 'Admins' }].map(tab => (
-              <button key={tab.id} onClick={() => setActiveAdminTab(tab.id)} className={`px-4 py-2 rounded-lg font-semibold text-sm ${activeAdminTab === tab.id ? 'bg-gray-900 text-white' : 'bg-gray-100 text-gray-700'}`}>{tab.label}</button>
+            {[
+              { id: 'messages', label: `Flagged (${flaggedMessages.length})` },
+              { id: 'users', label: `Users (${userStats?.total ?? '...'})` },
+              { id: 'admins', label: 'Admins' }
+            ].map(tab => (
+              <button key={tab.id} onClick={() => setActiveAdminTab(tab.id)}
+                className={`px-4 py-2 rounded-lg font-semibold text-sm ${activeAdminTab === tab.id ? 'bg-gray-900 text-white' : 'bg-gray-100 text-gray-700'}`}>
+                {tab.label}
+              </button>
             ))}
-            <button onClick={loadAdminData} className="ml-auto px-3 py-2 rounded-lg text-sm bg-blue-100 text-blue-700 font-semibold">Refresh</button>
+            <button onClick={loadAdminData} className="ml-auto px-3 py-2 rounded-lg text-sm bg-blue-100 text-blue-700 font-semibold">
+              {loading ? '...' : 'Refresh'}
+            </button>
           </div>
         </div>
+
         <div className="flex-1 p-6 overflow-y-auto">
           <div className="max-w-2xl mx-auto">
-            {loading && flaggedMessages.length === 0 && !userStats && (
+
+            {loading && !userStats && flaggedMessages.length === 0 && (
               <div className="text-center py-12">
                 <div className="w-8 h-8 border-4 border-gray-200 border-t-gray-800 rounded-full animate-spin mx-auto mb-3"></div>
                 <p className="text-gray-500">Loading...</p>
               </div>
             )}
-            {loading && (flaggedMessages.length > 0 || userStats) && (
-              <div className="text-xs text-gray-400 text-center py-1">Refreshing...</div>
-            )}
+
             {loadError && (
               <div className="bg-red-50 border-l-4 border-red-500 rounded-lg p-4 mb-4">
-                <p className="font-semibold text-red-800 mb-1">Could not load admin data</p>
+                <p className="font-semibold text-red-800 mb-1">Error loading data</p>
                 <p className="text-sm text-red-700">{loadError}</p>
-                <button onClick={loadAdminData} className="mt-3 bg-red-500 text-white px-4 py-2 rounded-lg text-sm font-semibold">Retry</button>
+                <button onClick={loadAdminData} className="mt-2 bg-red-500 text-white px-4 py-2 rounded-lg text-sm font-semibold">Retry</button>
               </div>
             )}
-            {(!loading || flaggedMessages.length > 0) && activeAdminTab === 'messages' && (
+
+            {activeAdminTab === 'messages' && (
               <div className="space-y-4">
-                <p className="text-sm text-gray-500">{flaggedMessages.length === 0 ? 'No flagged messages.' : `${flaggedMessages.length} awaiting review.`}</p>
+                <p className="text-sm text-gray-500">
+                  {flaggedMessages.length === 0 ? 'No flagged messages.' : `${flaggedMessages.length} awaiting review.`}
+                </p>
                 {flaggedMessages.map(msg => (
                   <div key={msg.id} className="bg-white rounded-xl shadow-md p-5 border-l-4 border-red-400">
-                    <div className="mb-2"><p className="font-semibold text-gray-800">{msg.username}</p><p className="text-xs text-gray-400">{formatDate(msg.created_at)} · #{msg.room}</p></div>
+                    <div className="mb-2">
+                      <p className="font-semibold text-gray-800">{msg.username}</p>
+                      <p className="text-xs text-gray-400">{formatDate(msg.created_at)} · #{msg.room}</p>
+                    </div>
                     <p className="text-gray-700 bg-gray-50 rounded-lg p-3 mb-4 text-sm">{msg.message}</p>
                     <div className="flex gap-2">
                       <button onClick={() => approveMessage(msg)} className="flex-1 bg-green-500 hover:bg-green-600 text-white rounded-lg py-2 font-semibold text-sm">Restore</button>
@@ -8493,21 +8442,43 @@ Keep going! Every day counts. 💪
                 ))}
               </div>
             )}
-            {(!loading || userStats) && activeAdminTab === 'users' && userStats && (
+
+            {activeAdminTab === 'users' && (
               <div className="space-y-3">
-                <div className="grid grid-cols-2 gap-4 mb-4">
-                  <div className="bg-white rounded-xl shadow-md p-5 text-center"><p className="text-3xl font-bold text-gray-800">{userStats.total}</p><p className="text-sm text-gray-500">Total users</p></div>
-                  <div className="bg-white rounded-xl shadow-md p-5 text-center"><p className="text-3xl font-bold text-blue-600">{userStats.users.filter(u => (new Date() - new Date(u.created_at)) < 7*24*60*60*1000).length}</p><p className="text-sm text-gray-500">New this week</p></div>
-                </div>
-                <h3 className="font-bold text-gray-800">Recent signups</h3>
-                {userStats.users.slice(0, 20).map(user => (
-                  <div key={user.id} className="bg-white rounded-xl shadow-sm p-4 flex items-center justify-between">
-                    <div><p className="font-semibold text-gray-800">{user.username || 'No username'}</p><p className="text-xs text-gray-400">{formatDate(user.created_at)}</p></div>
-                    <div className="text-right"><p className="text-sm font-semibold text-purple-600">Lvl {user.level}</p><p className="text-xs text-gray-400">{user.points} pts</p></div>
-                  </div>
-                ))}
+                {userStats ? (
+                  <>
+                    <div className="grid grid-cols-2 gap-4 mb-4">
+                      <div className="bg-white rounded-xl shadow-md p-5 text-center">
+                        <p className="text-3xl font-bold text-gray-800">{userStats.total}</p>
+                        <p className="text-sm text-gray-500">Total users</p>
+                      </div>
+                      <div className="bg-white rounded-xl shadow-md p-5 text-center">
+                        <p className="text-3xl font-bold text-blue-600">
+                          {userStats.users.filter(u => (new Date() - new Date(u.created_at)) < 7*24*60*60*1000).length}
+                        </p>
+                        <p className="text-sm text-gray-500">New this week</p>
+                      </div>
+                    </div>
+                    <h3 className="font-bold text-gray-800">All users</h3>
+                    {userStats.users.map(user => (
+                      <div key={user.id} className="bg-white rounded-xl shadow-sm p-4 flex items-center justify-between">
+                        <div>
+                          <p className="font-semibold text-gray-800">{user.username || 'No username'}</p>
+                          <p className="text-xs text-gray-400">{formatDate(user.created_at)}</p>
+                        </div>
+                        <div className="text-right">
+                          <p className="text-sm font-semibold text-purple-600">Lvl {user.level}</p>
+                          <p className="text-xs text-gray-400">{user.points} pts</p>
+                        </div>
+                      </div>
+                    ))}
+                  </>
+                ) : (
+                  <p className="text-center text-gray-400 py-8">Loading users...</p>
+                )}
               </div>
             )}
+
             {activeAdminTab === 'admins' && (
               <div className="space-y-4">
                 <div className="bg-white rounded-xl shadow-md p-5">
@@ -8523,20 +8494,24 @@ Keep going! Every day counts. 💪
                   <div className="border-t border-gray-200 pt-4">
                     <p className="text-sm font-semibold text-gray-700 mb-2">Add admin email</p>
                     <div className="flex gap-2">
-                      <input type="email" value={newAdminEmail} onChange={(e) => setNewAdminEmail(e.target.value)} onKeyPress={(e) => e.key === 'Enter' && addAdminEmail()} placeholder="email@example.com" className="flex-1 p-2.5 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-gray-800" />
+                      <input type="email" value={newAdminEmail} onChange={(e) => setNewAdminEmail(e.target.value)}
+                        onKeyPress={(e) => e.key === 'Enter' && addAdminEmail()}
+                        placeholder="email@example.com"
+                        className="flex-1 p-2.5 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-gray-800" />
                       <button onClick={addAdminEmail} className="bg-gray-900 hover:bg-gray-700 text-white px-4 rounded-lg font-semibold text-sm">Add</button>
                     </div>
                   </div>
                 </div>
                 <div className="bg-yellow-50 border-l-4 border-yellow-500 rounded-lg p-4">
-                  <p className="text-sm text-gray-700 mb-2">Add an email here to grant admin access. The user must have already signed up.</p>
-                  <p className="text-xs text-gray-500">After adding a new admin email, run this in Supabase SQL Editor to activate their access:</p>
+                  <p className="text-sm text-gray-700 mb-2">Add an email to grant admin access. The user must have signed up first.</p>
+                  <p className="text-xs text-gray-500">After adding, run in Supabase SQL Editor:</p>
                   <code className="block text-xs bg-white rounded p-2 mt-1 text-gray-700 select-all">
                     {"update public.admins a set user_id = u.id from auth.users u where lower(u.email) = lower(a.email);"}
                   </code>
                 </div>
               </div>
             )}
+
           </div>
         </div>
       </div>
