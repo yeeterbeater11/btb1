@@ -2929,26 +2929,85 @@ export default function BeatTheBet() {
     };
 
     // Memoize savings examples to prevent recalculation on every render
-    const savingsExamples = React.useMemo(() => {
-      const daily = dailyGamblingSpend;
-      if (daily <= 0) return [];
-      const c = (amount) => Math.ceil(amount / daily);
-      return [
-        { label: 'One week of groceries', days: c(150), amount: 150, category: 'essentials', description: "A full week of food on the table — paid for by money that stayed in your account." },
-        { label: 'One month of phone bill', days: c(60), amount: 60, category: 'bills', description: "Your phone bill covered without stress." },
-        { label: 'One electricity bill', days: c(300), amount: 300, category: 'bills', description: "A full power bill paid — one less thing to worry about." },
-        { label: 'One month of internet', days: c(80), amount: 80, category: 'bills', description: "Connected without it costing you sleep." },
-        { label: 'Credit card minimum — one month', days: c(200), amount: 200, category: 'debt', description: "One month's minimum payment covered — and you're ahead." },
-        { label: 'Emergency fund started ($500)', days: c(500), amount: 500, category: 'savings', description: "Your first real safety net. When something breaks, you're covered." },
-        { label: 'Car registration', days: c(900), amount: 900, category: 'bills', description: "Rego paid without scrambling. Just done." },
-        { label: 'Emergency fund solid ($1,000)', days: c(1000), amount: 1000, category: 'savings', description: "$1,000 sitting there. A car repair, a medical bill — handled." },
-        { label: 'Pay off $2,000 of debt', days: c(2000), amount: 2000, category: 'debt', description: "$2,000 of debt gone. Interest you'll never pay. Real weight off." },
-        { label: 'Pay off a personal loan ($5,000)', days: c(5000), amount: 5000, category: 'debt', description: "Loan closed. A direct debit that disappears from your account forever." },
-        { label: 'Six-month emergency fund ($5,000)', days: c(5000), amount: 5000, category: 'savings', description: "Six months of expenses covered. This is the level where life stops feeling precarious." },
-        { label: 'Pay off $10,000 of debt', days: c(10000), amount: 10000, category: 'debt', description: "A serious debt cleared. This is what financial recovery actually looks like." },
-        { label: 'House deposit contribution ($10,000)', days: c(10000), amount: 10000, category: 'future', description: "$10,000 toward a deposit. Real progress toward owning something that's yours." },
-      ].sort((a, b) => a.days - b.days);
-    }, [dailyGamblingSpend]);
+    // Default milestones — user can edit, delete, and add their own
+    const defaultMilestones = [
+      { id: 1, label: 'One week of groceries', amount: 150, category: 'essentials', description: "A full week of food on the table." },
+      { id: 2, label: 'Phone bill (one month)', amount: 60, category: 'bills', description: "Your phone bill covered without stress." },
+      { id: 3, label: 'Electricity bill', amount: 300, category: 'bills', description: "A full power bill paid — one less thing to worry about." },
+      { id: 4, label: 'Internet (one month)', amount: 80, category: 'bills', description: "Connected without it costing you sleep." },
+      { id: 5, label: 'Emergency fund started', amount: 500, category: 'savings', description: "Your first real safety net." },
+      { id: 6, label: 'Car registration', amount: 900, category: 'bills', description: "Rego paid without scrambling." },
+      { id: 7, label: 'Emergency fund solid', amount: 1000, category: 'savings', description: "$1,000 sitting there — car repairs, medical bills, handled." },
+      { id: 8, label: 'Pay off debt ($2,000)', amount: 2000, category: 'debt', description: "$2,000 of debt gone. Interest you'll never pay." },
+      { id: 9, label: 'Six-month emergency fund', amount: 5000, category: 'savings', description: "Six months covered. Life stops feeling precarious." },
+      { id: 10, label: 'House deposit contribution', amount: 10000, category: 'future', description: "$10,000 toward a deposit. Real progress." },
+    ];
+
+    const [milestones, setMilestones] = React.useState(() => {
+      const saved = localStorage.getItem('savingsMilestones');
+      return saved ? JSON.parse(saved) : defaultMilestones;
+    });
+
+    const saveMilestones = (updated) => {
+      setMilestones(updated);
+      localStorage.setItem('savingsMilestones', JSON.stringify(updated));
+    };
+
+    const [editingMilestone, setEditingMilestone] = React.useState(null); // id of milestone being edited
+    const [editLabel, setEditLabel] = React.useState('');
+    const [editAmount, setEditAmount] = React.useState('');
+    const [editCategory, setEditCategory] = React.useState('bills');
+    const [showAddMilestone, setShowAddMilestone] = React.useState(false);
+    const [newLabel, setNewLabel] = React.useState('');
+    const [newAmount, setNewAmount] = React.useState('');
+    const [newCategory, setNewCategory] = React.useState('bills');
+
+    const startEdit = (m) => {
+      setEditingMilestone(m.id);
+      setEditLabel(m.label);
+      setEditAmount(String(m.amount));
+      setEditCategory(m.category);
+    };
+
+    const saveEdit = () => {
+      if (!editLabel.trim() || !editAmount) return;
+      const updated = milestones.map(m =>
+        m.id === editingMilestone
+          ? { ...m, label: editLabel.trim(), amount: parseFloat(editAmount), category: editCategory }
+          : m
+      ).sort((a, b) => a.amount - b.amount);
+      saveMilestones(updated);
+      setEditingMilestone(null);
+    };
+
+    const deleteMilestone = (id) => {
+      saveMilestones(milestones.filter(m => m.id !== id));
+    };
+
+    const addMilestone = () => {
+      if (!newLabel.trim() || !newAmount) return;
+      const newM = {
+        id: Date.now(),
+        label: newLabel.trim(),
+        amount: parseFloat(newAmount),
+        category: newCategory,
+        description: '',
+      };
+      const updated = [...milestones, newM].sort((a, b) => a.amount - b.amount);
+      saveMilestones(updated);
+      setNewLabel('');
+      setNewAmount('');
+      setNewCategory('bills');
+      setShowAddMilestone(false);
+    };
+
+    const categoryOptions = [
+      { value: 'essentials', label: 'Essentials' },
+      { value: 'bills', label: 'Bills' },
+      { value: 'debt', label: 'Debt' },
+      { value: 'savings', label: 'Savings' },
+      { value: 'future', label: 'Future' },
+    ];
 
     return (
       <div className="flex flex-col min-h-screen bg-gray-50 pb-20">
@@ -3075,14 +3134,70 @@ export default function BeatTheBet() {
                 </div>
 
                 {/* Savings Milestones */}
-                <div className="bg-white rounded-xl shadow-md p-6">
-                  <h3 className="font-bold text-gray-800 mb-1">Your savings milestones</h3>
-                  <p className="text-sm text-gray-600 mb-4">Money staying in your account — not going out.</p>
+                <div className="bg-white rounded-xl shadow-md p-6" onClick={(e) => e.stopPropagation()}>
+                  <div className="flex items-center justify-between mb-1">
+                    <h3 className="font-bold text-gray-800">Your savings milestones</h3>
+                    <button
+                      onClick={() => setShowAddMilestone(!showAddMilestone)}
+                      className="text-blue-600 hover:text-blue-700 font-semibold text-sm"
+                    >
+                      {showAddMilestone ? 'Cancel' : '+ Add'}
+                    </button>
+                  </div>
+                  <p className="text-sm text-gray-500 mb-4">Edit or remove any milestone, and add your own — phone bill, car loan, anything that matters to you.</p>
+
+                  {/* Add milestone form */}
+                  {showAddMilestone && (
+                    <div className="bg-blue-50 border-2 border-blue-200 rounded-xl p-4 mb-4" onClick={(e) => e.stopPropagation()}>
+                      <h4 className="font-semibold text-gray-800 mb-3">Add a milestone</h4>
+                      <div className="space-y-3">
+                        <input
+                          type="text"
+                          value={newLabel}
+                          onChange={(e) => setNewLabel(e.target.value)}
+                          placeholder="e.g. Telstra bill, Car loan payment..."
+                          className="w-full p-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent text-sm"
+                        />
+                        <div className="flex gap-2">
+                          <div className="flex items-center gap-1 flex-1 border border-gray-300 rounded-lg px-2.5 focus-within:ring-2 focus-within:ring-blue-500">
+                            <span className="text-gray-500 text-sm">$</span>
+                            <input
+                              type="number"
+                              value={newAmount}
+                              onChange={(e) => setNewAmount(e.target.value)}
+                              placeholder="Amount"
+                              min="1"
+                              className="flex-1 p-2.5 focus:outline-none text-sm bg-transparent"
+                            />
+                          </div>
+                          <select
+                            value={newCategory}
+                            onChange={(e) => setNewCategory(e.target.value)}
+                            className="flex-1 p-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 text-sm"
+                          >
+                            {categoryOptions.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
+                          </select>
+                        </div>
+                        <button
+                          onClick={addMilestone}
+                          disabled={!newLabel.trim() || !newAmount}
+                          className="w-full bg-blue-500 hover:bg-blue-600 disabled:bg-gray-300 text-white rounded-lg py-2.5 font-semibold text-sm transition-colors"
+                        >
+                          Add Milestone
+                        </button>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Milestones list */}
                   <div className="space-y-3">
-                    {savingsExamples.map((milestone, idx) => {
+                    {milestones.map((milestone) => {
                       const totalSaved = parseFloat(calculateSavings(getDaysClean()));
                       const isReached = totalSaved >= milestone.amount;
-                      const daysUntil = Math.max(0, milestone.days - getDaysClean());
+                      const daysUntil = dailyGamblingSpend > 0
+                        ? Math.max(0, Math.ceil((milestone.amount - totalSaved) / dailyGamblingSpend))
+                        : null;
+                      const progress = Math.min((totalSaved / milestone.amount) * 100, 100);
                       const cats = {
                         essentials: { bg: 'bg-green-50', border: 'border-green-400', badge: 'bg-green-100 text-green-700', bar: 'bg-green-400', label: 'Essentials' },
                         bills:      { bg: 'bg-blue-50',  border: 'border-blue-400',  badge: 'bg-blue-100 text-blue-700',  bar: 'bg-blue-400',  label: 'Bills' },
@@ -3090,34 +3205,89 @@ export default function BeatTheBet() {
                         savings:    { bg: 'bg-purple-50',border: 'border-purple-400',badge: 'bg-purple-100 text-purple-700',bar: 'bg-purple-400',label: 'Savings' },
                         future:     { bg: 'bg-indigo-50',border: 'border-indigo-400',badge: 'bg-indigo-100 text-indigo-700',bar: 'bg-indigo-400',label: 'Future' },
                       };
-                      const c = cats[milestone.category];
-                      const progress = Math.min((totalSaved / milestone.amount) * 100, 100);
+                      const c = cats[milestone.category] || cats.bills;
+                      const isEditing = editingMilestone === milestone.id;
+
                       return (
-                        <div key={idx} className={`border-l-4 ${c.border} ${isReached ? c.bg : 'bg-gray-50'} rounded-lg p-4`}>
-                          <div className="flex items-start justify-between gap-2 mb-2">
-                            <div className="flex-1">
-                              <div className="flex items-center gap-2 mb-1 flex-wrap">
-                                <span className={`text-xs font-semibold px-2 py-0.5 rounded-full ${c.badge}`}>{c.label}</span>
-                                {isReached && <span className="text-xs font-bold text-green-600">Reached</span>}
+                        <div key={milestone.id} className={`border-l-4 ${c.border} ${isReached ? c.bg : 'bg-gray-50'} rounded-lg p-4`} onClick={(e) => e.stopPropagation()}>
+                          {isEditing ? (
+                            <div className="space-y-2">
+                              <input
+                                type="text"
+                                value={editLabel}
+                                onChange={(e) => setEditLabel(e.target.value)}
+                                className="w-full p-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                              />
+                              <div className="flex gap-2">
+                                <div className="flex items-center gap-1 flex-1 border border-gray-300 rounded-lg px-2 focus-within:ring-2 focus-within:ring-blue-500">
+                                  <span className="text-gray-500 text-sm">$</span>
+                                  <input
+                                    type="number"
+                                    value={editAmount}
+                                    onChange={(e) => setEditAmount(e.target.value)}
+                                    min="1"
+                                    className="flex-1 p-2 focus:outline-none text-sm bg-transparent"
+                                  />
+                                </div>
+                                <select
+                                  value={editCategory}
+                                  onChange={(e) => setEditCategory(e.target.value)}
+                                  className="flex-1 p-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-blue-500"
+                                >
+                                  {categoryOptions.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
+                                </select>
                               </div>
-                              <p className={`font-semibold text-sm ${isReached ? 'text-gray-900' : 'text-gray-500'}`}>{milestone.label}</p>
-                              {isReached
-                                ? <p className="text-xs text-gray-600 mt-1">{milestone.description}</p>
-                                : <p className="text-xs text-gray-400 mt-1">{daysUntil} more day{daysUntil !== 1 ? 's' : ''} away</p>
-                              }
+                              <div className="flex gap-2">
+                                <button onClick={() => setEditingMilestone(null)} className="flex-1 py-2 text-sm bg-gray-200 hover:bg-gray-300 text-gray-700 rounded-lg font-semibold">Cancel</button>
+                                <button onClick={saveEdit} disabled={!editLabel.trim() || !editAmount} className="flex-1 py-2 text-sm bg-blue-500 hover:bg-blue-600 disabled:bg-gray-300 text-white rounded-lg font-semibold">Save</button>
+                              </div>
                             </div>
-                            <p className={`text-lg font-bold flex-shrink-0 ${isReached ? 'text-green-600' : 'text-gray-300'}`}>${milestone.amount.toLocaleString()}</p>
-                          </div>
-                          <div className="w-full bg-gray-200 rounded-full h-1.5">
-                            <div className={`h-1.5 rounded-full transition-all ${isReached ? 'bg-green-500' : c.bar}`} style={{ width: `${progress}%` }} />
-                          </div>
+                          ) : (
+                            <>
+                              <div className="flex items-start justify-between gap-2 mb-2">
+                                <div className="flex-1 min-w-0">
+                                  <div className="flex items-center gap-2 mb-1 flex-wrap">
+                                    <span className={`text-xs font-semibold px-2 py-0.5 rounded-full ${c.badge}`}>{c.label}</span>
+                                    {isReached && <span className="text-xs font-bold text-green-600">Reached</span>}
+                                  </div>
+                                  <p className={`font-semibold text-sm truncate ${isReached ? 'text-gray-900' : 'text-gray-600'}`}>{milestone.label}</p>
+                                  {isReached && milestone.description
+                                    ? <p className="text-xs text-gray-600 mt-0.5">{milestone.description}</p>
+                                    : !isReached && daysUntil !== null
+                                    ? <p className="text-xs text-gray-400 mt-0.5">{daysUntil} more day{daysUntil !== 1 ? 's' : ''} away</p>
+                                    : null
+                                  }
+                                </div>
+                                <div className="flex items-center gap-2 flex-shrink-0">
+                                  <p className={`text-base font-bold ${isReached ? 'text-green-600' : 'text-gray-400'}`}>${milestone.amount.toLocaleString()}</p>
+                                  <button onClick={() => startEdit(milestone)} className="text-gray-400 hover:text-blue-500 text-xs px-2 py-1 rounded hover:bg-blue-50 transition-colors">Edit</button>
+                                  <button onClick={() => deleteMilestone(milestone.id)} className="text-gray-400 hover:text-red-500 text-xs px-2 py-1 rounded hover:bg-red-50 transition-colors">✕</button>
+                                </div>
+                              </div>
+                              <div className="w-full bg-gray-200 rounded-full h-1.5">
+                                <div className={`h-1.5 rounded-full transition-all ${isReached ? 'bg-green-500' : c.bar}`} style={{ width: `${progress}%` }} />
+                              </div>
+                            </>
+                          )}
                         </div>
                       );
                     })}
-                    {savingsExamples.length === 0 && (
-                      <p className="text-gray-500 text-center py-4 text-sm">Enter your daily spend above to see your milestones.</p>
+                    {milestones.length === 0 && (
+                      <div className="text-center py-6">
+                        <p className="text-gray-500 text-sm mb-2">No milestones yet.</p>
+                        <button onClick={() => setShowAddMilestone(true)} className="text-blue-600 font-semibold text-sm">Add your first one</button>
+                      </div>
                     )}
                   </div>
+
+                  {milestones.length > 0 && (
+                    <button
+                      onClick={() => { if (window.confirm('Reset milestones to defaults?')) { saveMilestones(defaultMilestones); } }}
+                      className="mt-4 text-xs text-gray-400 hover:text-gray-600 w-full text-center"
+                    >
+                      Reset to defaults
+                    </button>
+                  )}
                 </div>
 
                                 {/* The Real Message */}
