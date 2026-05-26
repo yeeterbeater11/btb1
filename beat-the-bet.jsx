@@ -8,68 +8,246 @@ const { Clock, AlertCircle, Phone, MapPin, LifeBuoy, Home, Info, Sparkles, Trend
 const SUPABASE_URL = 'https://emrpkubjspydnbrittuy.supabase.co';
 const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImVtcnBrdWJqc3B5ZG5icml0dHV5Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3Nzk2NTE1MjQsImV4cCI6MjA5NTIyNzUyNH0.wyrwYfXyOZgdS3NnK7z-kTU-KwbfOH_TF1vv6CsNCmI';
 
-// Simple Supabase client using fetch
-const supabase = {
-  auth: {
-    signUp: async ({ email, password }) => {
-      try {
-        const response = await fetch(`${SUPABASE_URL}/auth/v1/signup`, {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            'apikey': SUPABASE_ANON_KEY,
-            'Authorization': `Bearer ${SUPABASE_ANON_KEY}`
-          },
-          body: JSON.stringify({ email, password })
-        });
-        
-        const data = await response.json();
-        
-        if (!response.ok) {
-          return { data: null, error: data };
-        }
-        
-        return { data, error: null };
-      } catch (error) {
-        return { data: null, error: { message: error.message } };
-      }
-    },
-    
-    signInWithPassword: async ({ email, password }) => {
-      try {
-        const response = await fetch(`${SUPABASE_URL}/auth/v1/token?grant_type=password`, {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            'apikey': SUPABASE_ANON_KEY,
-            'Authorization': `Bearer ${SUPABASE_ANON_KEY}`
-          },
-          body: JSON.stringify({ email, password })
-        });
-        
-        const data = await response.json();
-        
-        if (!response.ok) {
-          return { data: null, error: data };
-        }
-        
-        // Save session
-        if (data.access_token) {
-          localStorage.setItem('supabase_session', JSON.stringify(data));
-        }
-        
-        return { data, error: null };
-      } catch (error) {
-        return { data: null, error: { message: error.message } };
-      }
-    },
-    
-    signOut: async () => {
-      localStorage.removeItem('supabase_session');
-      return { error: null };
+// ============================================================
+// Supabase Client
+// ============================================================
+const supabase = (() => {
+  let _session = null;
+
+  const getSession = () => {
+    if (_session) return _session;
+    const saved = localStorage.getItem('sb_session');
+    if (saved) { _session = JSON.parse(saved); }
+    return _session;
+  };
+
+  const saveSession = (session) => {
+    _session = session;
+    if (session) {
+      localStorage.setItem('sb_session', JSON.stringify(session));
+    } else {
+      localStorage.removeItem('sb_session');
     }
-  }
-};
+  };
+
+  const authHeaders = () => {
+    const session = getSession();
+    return {
+      'Content-Type': 'application/json',
+      'apikey': SUPABASE_ANON_KEY,
+      'Authorization': `Bearer ${session ? session.access_token : SUPABASE_ANON_KEY}`
+    };
+  };
+
+  const dbHeaders = () => authHeaders();
+
+  return {
+    getSession,
+
+    auth: {
+      signUp: async ({ email, password }) => {
+        try {
+          const res = await fetch(`${SUPABASE_URL}/auth/v1/signup`, {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              'apikey': SUPABASE_ANON_KEY,
+              'Authorization': `Bearer ${SUPABASE_ANON_KEY}`
+            },
+            body: JSON.stringify({ email, password })
+          });
+          const data = await res.json();
+          if (!res.ok) return { data: null, error: data };
+          if (data.access_token) saveSession(data);
+          return { data, error: null };
+        } catch (e) {
+          return { data: null, error: { message: e.message } };
+        }
+      },
+
+      signInWithPassword: async ({ email, password }) => {
+        try {
+          const res = await fetch(`${SUPABASE_URL}/auth/v1/token?grant_type=password`, {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              'apikey': SUPABASE_ANON_KEY,
+              'Authorization': `Bearer ${SUPABASE_ANON_KEY}`
+            },
+            body: JSON.stringify({ email, password })
+          });
+          const data = await res.json();
+          if (!res.ok) return { data: null, error: data };
+          if (data.access_token) saveSession(data);
+          return { data, error: null };
+        } catch (e) {
+          return { data: null, error: { message: e.message } };
+        }
+      },
+
+      signOut: async () => {
+        try {
+          const session = getSession();
+          if (session) {
+            await fetch(`${SUPABASE_URL}/auth/v1/logout`, {
+              method: 'POST',
+              headers: {
+                'Content-Type': 'application/json',
+                'apikey': SUPABASE_ANON_KEY,
+                'Authorization': `Bearer ${session.access_token}`
+              }
+            });
+          }
+        } catch (e) {}
+        saveSession(null);
+        return { error: null };
+      },
+
+      getUser: () => {
+        const session = getSession();
+        if (!session) return null;
+        return session.user || null;
+      }
+    },
+
+    // Database helpers
+    from: (table) => ({
+      select: (cols = '*') => ({
+        eq: async (col, val) => {
+          try {
+            const res = await fetch(
+              `${SUPABASE_URL}/rest/v1/${table}?${col}=eq.${val}&select=${cols}`,
+              { headers: dbHeaders() }
+            );
+            const data = await res.json();
+            if (!res.ok) return { data: null, error: data };
+            return { data, error: null };
+          } catch (e) { return { data: null, error: { message: e.message } }; }
+        },
+        maybeSingle: async () => {
+          try {
+            const session = getSession();
+            if (!session) return { data: null, error: null };
+            const uid = session.user.id;
+            const res = await fetch(
+              `${SUPABASE_URL}/rest/v1/${table}?user_id=eq.${uid}&select=${cols}&limit=1`,
+              { headers: dbHeaders() }
+            );
+            const data = await res.json();
+            if (!res.ok) return { data: null, error: data };
+            return { data: data[0] || null, error: null };
+          } catch (e) { return { data: null, error: { message: e.message } }; }
+        }
+      }),
+
+      upsert: async (row, opts = {}) => {
+        try {
+          const res = await fetch(`${SUPABASE_URL}/rest/v1/${table}`, {
+            method: 'POST',
+            headers: {
+              ...dbHeaders(),
+              'Prefer': 'resolution=merge-duplicates,return=representation'
+            },
+            body: JSON.stringify(row)
+          });
+          const data = await res.json();
+          if (!res.ok) return { data: null, error: data };
+          return { data, error: null };
+        } catch (e) { return { data: null, error: { message: e.message } }; }
+      },
+
+      insert: async (row) => {
+        try {
+          const res = await fetch(`${SUPABASE_URL}/rest/v1/${table}`, {
+            method: 'POST',
+            headers: { ...dbHeaders(), 'Prefer': 'return=representation' },
+            body: JSON.stringify(row)
+          });
+          const data = await res.json();
+          if (!res.ok) return { data: null, error: data };
+          return { data, error: null };
+        } catch (e) { return { data: null, error: { message: e.message } }; }
+      },
+
+      update: (vals) => ({
+        eq: async (col, val) => {
+          try {
+            const res = await fetch(
+              `${SUPABASE_URL}/rest/v1/${table}?${col}=eq.${val}`,
+              {
+                method: 'PATCH',
+                headers: { ...dbHeaders(), 'Prefer': 'return=representation' },
+                body: JSON.stringify(vals)
+              }
+            );
+            const data = await res.json();
+            if (!res.ok) return { data: null, error: data };
+            return { data, error: null };
+          } catch (e) { return { data: null, error: { message: e.message } }; }
+        }
+      }),
+
+      delete: () => ({
+        eq: async (col, val) => {
+          try {
+            const res = await fetch(
+              `${SUPABASE_URL}/rest/v1/${table}?${col}=eq.${val}`,
+              { method: 'DELETE', headers: dbHeaders() }
+            );
+            if (!res.ok) {
+              const data = await res.json();
+              return { error: data };
+            }
+            return { error: null };
+          } catch (e) { return { error: { message: e.message } }; }
+        }
+      })
+    }),
+
+    // Storage helpers
+    storage: {
+      from: (bucket) => ({
+        upload: async (path, file) => {
+          try {
+            const session = getSession();
+            const res = await fetch(`${SUPABASE_URL}/storage/v1/object/${bucket}/${path}`, {
+              method: 'POST',
+              headers: {
+                'apikey': SUPABASE_ANON_KEY,
+                'Authorization': `Bearer ${session ? session.access_token : SUPABASE_ANON_KEY}`,
+                'Content-Type': file.type
+              },
+              body: file
+            });
+            const data = await res.json();
+            if (!res.ok) return { data: null, error: data };
+            return { data, error: null };
+          } catch (e) { return { data: null, error: { message: e.message } }; }
+        },
+        getPublicUrl: (path) => {
+          return { data: { publicUrl: `${SUPABASE_URL}/storage/v1/object/public/why-quitting-photos/${path}` } };
+        },
+        createSignedUrl: async (path, expiresIn = 3600) => {
+          try {
+            const session = getSession();
+            const res = await fetch(`${SUPABASE_URL}/storage/v1/object/sign/${bucket}/${path}`, {
+              method: 'POST',
+              headers: {
+                'apikey': SUPABASE_ANON_KEY,
+                'Authorization': `Bearer ${session ? session.access_token : SUPABASE_ANON_KEY}`,
+                'Content-Type': 'application/json'
+              },
+              body: JSON.stringify({ expiresIn })
+            });
+            const data = await res.json();
+            if (!res.ok) return { data: null, error: data };
+            return { data: { signedUrl: `${SUPABASE_URL}/storage/v1${data.signedURL}` }, error: null };
+          } catch (e) { return { data: null, error: { message: e.message } }; }
+        }
+      })
+    }
+  };
+})();
 
 /**
  * REMINDER FOR FUTURE DEVELOPMENT:
@@ -92,8 +270,24 @@ const supabase = {
 
 export default function BeatTheBet() {
   // Authentication State
+  // Restore session from Supabase on load
   const [isAuthenticated, setIsAuthenticated] = useState(() => {
     const saved = localStorage.getItem('isAuthenticated');
+    const session = localStorage.getItem('sb_session');
+    // If we have a saved session, validate it's not expired
+    if (saved === 'true' && session) {
+      try {
+        const s = JSON.parse(session);
+        const expiresAt = s.expires_at * 1000;
+        if (Date.now() > expiresAt) {
+          // Session expired — clear and force re-login
+          localStorage.removeItem('isAuthenticated');
+          localStorage.removeItem('currentUser');
+          localStorage.removeItem('sb_session');
+          return false;
+        }
+      } catch (e) {}
+    }
     return saved === 'true';
   });
   const [authScreen, setAuthScreen] = useState('welcome'); // 'welcome', 'login', 'signup'
@@ -427,82 +621,129 @@ export default function BeatTheBet() {
     return errors;
   };
   
-  // Mock Authentication Functions (will be replaced with real Supabase when deployed)
-  const mockLogin = async (email, password) => {
-    // Simulate API delay
-    await new Promise(resolve => setTimeout(resolve, 1000));
-    
-    // Mock validation
-    if (!validators.email(email)) {
-      throw new Error('Please enter a valid email address');
-    }
-    
-    if (!password || password.length < 3) {
-      throw new Error('Please enter your password');
-    }
-    
-    // Mock success
+  // ============================================================
+  // Real Supabase Authentication
+  // ============================================================
+  const realLogin = async (email, password) => {
+    if (!validators.email(email)) throw new Error('Please enter a valid email address');
+    if (!password) throw new Error('Please enter your password');
+
+    const { data, error } = await supabase.auth.signInWithPassword({ email, password });
+    if (error) throw new Error(error.message || error.error_description || 'Login failed');
+
     const user = {
-      id: Date.now(),
-      email: email,
-      username: username || email.split('@')[0],
-      createdAt: new Date().toISOString()
-    };
-    
-    console.log('Mock login successful:', user);
-    
-    setCurrentUser(user);
-    setIsAuthenticated(true);
-    setAuthScreen('welcome');
-    localStorage.setItem('isAuthenticated', 'true');
-    localStorage.setItem('currentUser', JSON.stringify(user));
-    
-    return user;
-  };
-  
-  const mockSignup = async (email, password, confirmPassword) => {
-    // Simulate API delay
-    await new Promise(resolve => setTimeout(resolve, 1000));
-    
-    // Validation
-    if (!validators.email(email)) {
-      throw new Error('Please enter a valid email address');
-    }
-    
-    if (!validators.password(password)) {
-      throw new Error('Password must be at least 8 characters with 1 uppercase, 1 lowercase, and 1 number');
-    }
-    
-    if (password !== confirmPassword) {
-      throw new Error('Passwords do not match');
-    }
-    
-    // Mock success
-    const user = {
-      id: Date.now(),
-      email: email,
+      id: data.user.id,
+      email: data.user.email,
       username: '',
-      createdAt: new Date().toISOString(),
+      createdAt: data.user.created_at,
       profileComplete: false
     };
-    
-    console.log('Mock signup successful:', user);
-    
+
+    // Load profile from database
+    const { data: profile } = await supabase.from('profiles').select('*').eq('id', data.user.id);
+    if (profile && profile.length > 0) {
+      const p = profile[0];
+      user.username = p.username || email.split('@')[0];
+      user.profileComplete = !!(p.username);
+
+      // Restore profile data to state
+      if (p.start_date) {
+        setStartDate(new Date(p.start_date));
+        localStorage.setItem('startDate', new Date(p.start_date).toISOString());
+      }
+      if (p.age_range) {
+        setUserAgeRange(p.age_range);
+        localStorage.setItem('userAgeRange', p.age_range);
+      }
+      if (p.daily_gambling_spend) {
+        setDailyGamblingSpend(parseFloat(p.daily_gambling_spend));
+        localStorage.setItem('dailyGamblingSpend', p.daily_gambling_spend.toString());
+      }
+      if (p.points) setPoints(p.points);
+      if (p.level) setLevel(p.level);
+    }
+
     setCurrentUser(user);
     setIsAuthenticated(true);
-    setAuthScreen('welcome');
     localStorage.setItem('isAuthenticated', 'true');
     localStorage.setItem('currentUser', JSON.stringify(user));
-    
     return user;
   };
-  
-  const logout = () => {
+
+  const realSignup = async (email, password, confirmPassword) => {
+    if (!validators.email(email)) throw new Error('Please enter a valid email address');
+    if (!validators.password(password)) throw new Error('Password must be at least 8 characters with 1 uppercase, 1 lowercase, and 1 number');
+    if (password !== confirmPassword) throw new Error('Passwords do not match');
+
+    const { data, error } = await supabase.auth.signUp({ email, password });
+    if (error) throw new Error(error.message || error.error_description || 'Sign up failed');
+
+    const user = {
+      id: data.user.id,
+      email: data.user.email,
+      username: '',
+      createdAt: data.user.created_at,
+      profileComplete: false
+    };
+
+    setCurrentUser(user);
+    setIsAuthenticated(true);
+    localStorage.setItem('isAuthenticated', 'true');
+    localStorage.setItem('currentUser', JSON.stringify(user));
+    return user;
+  };
+
+  const logout = async () => {
+    await supabase.auth.signOut();
     setCurrentUser(null);
     setIsAuthenticated(false);
     localStorage.removeItem('isAuthenticated');
     localStorage.removeItem('currentUser');
+    localStorage.removeItem('sb_session');
     setAuthScreen('welcome');
+  };
+
+  // ============================================================
+  // Sync data to Supabase (called after profile setup and on key changes)
+  // ============================================================
+  const syncProfileToSupabase = async (overrides = {}) => {
+    const session = supabase.getSession();
+    if (!session) return;
+    const uid = session.user.id;
+
+    await supabase.from('profiles').upsert({
+      id: uid,
+      username: overrides.username ?? username,
+      age_range: overrides.age_range ?? userAgeRange,
+      start_date: overrides.start_date ?? startDate,
+      daily_gambling_spend: overrides.daily_gambling_spend ?? dailyGamblingSpend,
+      points: overrides.points ?? points,
+      level: overrides.level ?? level,
+      updated_at: new Date().toISOString()
+    });
+  };
+
+  const syncJournalEntry = async (entry) => {
+    const session = supabase.getSession();
+    if (!session) return;
+    await supabase.from('journal_entries').insert({
+      user_id: session.user.id,
+      mode: entry.mode,
+      mood: entry.mood,
+      content: entry.content,
+      responses: entry.responses,
+      created_at: entry.date
+    });
+  };
+
+  const syncAppEvent = async (eventType) => {
+    const session = supabase.getSession();
+    if (!session) return;
+    await supabase.from('app_events').insert({
+      user_id: session.user.id,
+      event_type: eventType,
+      occurred_at: new Date().toISOString()
+    });
   };
   
   // Error Toast State
@@ -725,6 +966,7 @@ export default function BeatTheBet() {
     const newDate = new Date();
     setStartDate(newDate);
     localStorage.setItem('startDate', newDate.toISOString());
+    syncProfileToSupabase({ start_date: newDate.toISOString() }).catch(() => {});
     setShowResetModal(false);
   };
 
@@ -735,16 +977,16 @@ export default function BeatTheBet() {
     const newPoints = points + amount;
     setPoints(newPoints);
     localStorage.setItem('userPoints', newPoints);
-    
+
     // Check for level up
     const newLevel = calculateLevel(newPoints);
     if (newLevel > level) {
       setLevel(newLevel);
       localStorage.setItem('userLevel', newLevel);
-      // Could show level-up animation here
+      syncProfileToSupabase({ points: newPoints, level: newLevel }).catch(() => {});
+    } else {
+      syncProfileToSupabase({ points: newPoints }).catch(() => {});
     }
-    
-    console.log(`+${amount} points: ${reason}`);
   };
 
   const calculateLevel = (totalPoints) => {
@@ -800,8 +1042,11 @@ export default function BeatTheBet() {
     addPoints(basePoints + modeBonus, 'Journal entry');
     
     // Show success message
-    showSuccess('Journal entry saved! 📝');
-    
+    showSuccess('Journal entry saved!');
+
+    // Sync to Supabase in background
+    syncJournalEntry(newEntry).catch(() => {});
+
     return newEntry;
   };
 
@@ -921,6 +1166,7 @@ export default function BeatTheBet() {
               const updated = [...panicButtonTimestamps, now];
               setPanicButtonTimestamps(updated);
               localStorage.setItem('panicButtonTimestamps', JSON.stringify(updated));
+              syncAppEvent('panic_button').catch(() => {});
               setShowPanicModal(true);
             }}
             className="w-full bg-gradient-to-r from-red-500 to-red-600 hover:from-red-600 hover:to-red-700 text-white rounded-2xl p-5 shadow-lg transition-all active:scale-95"
@@ -4492,8 +4738,10 @@ export default function BeatTheBet() {
               <button
                 onClick={() => {
                   if (tempStartDate) {
-                    setStartDate(tempStartDate);
-                    localStorage.setItem('startDate', tempStartDate);
+                    const d = new Date(tempStartDate);
+                    setStartDate(d);
+                    localStorage.setItem('startDate', d.toISOString());
+                    syncProfileToSupabase({ start_date: d.toISOString() }).catch(() => {});
                     setOnboardingStep(2);
                   }
                 }}
@@ -6244,6 +6492,7 @@ export default function BeatTheBet() {
         const newDate = new Date(tempTimerDate);
         setStartDate(newDate);
         localStorage.setItem('startDate', newDate.toISOString());
+        syncProfileToSupabase({ start_date: newDate.toISOString() }).catch(() => {});
         setEditingTimer(false);
         showSuccess('Timer date updated!');
       }
@@ -7018,7 +7267,7 @@ Keep going! Every day counts. 💪
       
       setLoading(true);
       try {
-        await mockLogin(email, password);
+        await realLogin(email, password);
         showSuccess('Welcome back!');
       } catch (error) {
         showError(error.message);
@@ -7162,7 +7411,7 @@ Keep going! Every day counts. 💪
       
       setLoading(true);
       try {
-        await mockSignup(email, password, confirmPassword);
+        await realSignup(email, password, confirmPassword);
         showSuccess('Account created successfully!');
       } catch (error) {
         showError(error.message);
@@ -7335,15 +7584,17 @@ Keep going! Every day counts. 💪
       setUsername(profileData.username);
       setUserAgeRange(profileData.ageRange);
 
-      setStartDate(new Date(profileData.quitDate));
-      
       localStorage.setItem('username', profileData.username);
       localStorage.setItem('userAgeRange', profileData.ageRange);
 
-      localStorage.setItem('startDate', new Date(profileData.quitDate).toISOString());
-      
+      // Sync to Supabase
+      await syncProfileToSupabase({
+        username: profileData.username,
+        age_range: profileData.ageRange,
+      });
+
       setLoading(false);
-      showSuccess('Profile completed! Welcome to Beat the Bet! 🎉');
+      showSuccess('Profile completed! Welcome to Beat the Bet!');
     };
 
     if (loading) {
