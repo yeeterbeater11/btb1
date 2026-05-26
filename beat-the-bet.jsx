@@ -297,18 +297,31 @@ const supabase = (() => {
  */
 
 export default function BeatTheBet() {
-  // Admin access - emails that have admin panel access
+  // Admin access
   const [adminEmails, setAdminEmails] = React.useState(() => {
     const saved = localStorage.getItem('adminEmails');
-    // Default: add your email here
     return saved ? JSON.parse(saved) : ['beatthebetadmin@gmail.com'];
   });
 
-  const isAdmin = () => {
+  const [isAdminUser, setIsAdminUser] = React.useState(false);
+
+  // Check admin status against Supabase admins table on login
+  const checkAdminStatus = React.useCallback(async () => {
     const session = supabase.getSession();
-    if (!session) return false;
-    return adminEmails.map(e => e.toLowerCase()).includes(session.user.email.toLowerCase());
-  };
+    if (!session) { setIsAdminUser(false); return; }
+    try {
+      const res = await fetch(
+        `${SUPABASE_URL}/rest/v1/admins?email=eq.${encodeURIComponent(session.user.email)}&select=email`,
+        { headers: { 'apikey': SUPABASE_ANON_KEY, 'Authorization': `Bearer ${session.access_token}` } }
+      );
+      if (res.ok) {
+        const data = await res.json();
+        setIsAdminUser(data.length > 0);
+      }
+    } catch (e) { setIsAdminUser(false); }
+  }, []);
+
+  const isAdmin = () => isAdminUser;
 
   // Authentication State
   // Restore session from Supabase on load
@@ -684,8 +697,14 @@ export default function BeatTheBet() {
     const { data: profile } = await supabase.from('profiles').select('*').eq('id', data.user.id);
     if (profile && profile.length > 0) {
       const p = profile[0];
-      user.username = p.username || email.split('@')[0];
-      user.profileComplete = !!(p.username);
+      const resolvedUsername = p.username || '';
+      user.username = resolvedUsername;
+      user.profileComplete = !!(resolvedUsername && resolvedUsername.length >= 2);
+      // Also restore username to global state
+      if (resolvedUsername) {
+        setUsername(resolvedUsername);
+        localStorage.setItem('username', resolvedUsername);
+      }
 
       // Restore profile data to state
       if (p.start_date) {
@@ -708,6 +727,8 @@ export default function BeatTheBet() {
     setIsAuthenticated(true);
     localStorage.setItem('isAuthenticated', 'true');
     localStorage.setItem('currentUser', JSON.stringify(user));
+    // Check admin status after login
+    setTimeout(() => checkAdminStatus(), 500);
     return user;
   };
 
@@ -834,6 +855,11 @@ export default function BeatTheBet() {
     localStorage.setItem('toolUsage', JSON.stringify(updated));
   };
   
+  // Check admin status on mount if already logged in
+  useEffect(() => {
+    if (isAuthenticated) checkAdminStatus();
+  }, [isAuthenticated]);
+
   // Track app open on mount
   useEffect(() => {
     const now = new Date().toISOString();
@@ -1672,7 +1698,6 @@ export default function BeatTheBet() {
     if (activeTool === 'music-discovery') return <MusicDiscoveryPage />;
     if (activeTool === 'why-quitting') return <WhyImQuittingPage />;
     if (activeTool === 'settings') return <SettingsPage />;
-    if (activeTool === 'admin') return isAdmin() ? <AdminPanel /> : null;
     if (activeTool === 'admin') return isAdmin() ? <AdminPanel /> : null;
     if (activeTool === 'nearby') return <NearbyPage />;
 
@@ -6588,22 +6613,15 @@ export default function BeatTheBet() {
     // Main Profile View
     return (
       <div className="flex flex-col min-h-screen bg-gray-50 pb-20">
-
-        {/* Header */}
         <div className="bg-gradient-to-br from-purple-600 to-blue-600 text-white p-6 pb-8">
           <div className="flex items-center justify-between mb-4">
             <h1 className="text-2xl font-bold">My Profile</h1>
             {isAdmin() && (
-              <button
-                onClick={() => { setActiveTab('resources'); setActiveTool('admin'); }}
-                className="bg-white bg-opacity-20 hover:bg-opacity-30 px-3 py-1.5 rounded-lg text-xs font-bold transition-colors"
-              >
+              <button onClick={() => { setActiveTab('resources'); setActiveTool('admin'); }} className="bg-white bg-opacity-20 hover:bg-opacity-30 px-3 py-1.5 rounded-lg text-xs font-bold transition-colors">
                 Admin Panel
               </button>
             )}
           </div>
-
-          {/* User info */}
           <div className="flex items-center gap-4">
             <div className="w-16 h-16 bg-white bg-opacity-20 rounded-full flex items-center justify-center text-3xl font-bold">
               {(username || '?')[0].toUpperCase()}
@@ -6612,58 +6630,35 @@ export default function BeatTheBet() {
               <p className="text-xl font-bold">{username || 'Anonymous'}</p>
               <p className="text-sm opacity-75">{currentUser?.email}</p>
               <div className="flex items-center gap-2 mt-1">
-                <span className={`${getLevelTier(level).bg} ${getLevelTier(level).color} px-2 py-0.5 rounded-full text-xs font-bold`}>
-                  {getLevelTier(level).icon} Level {level}
-                </span>
-                <span className="bg-white bg-opacity-20 px-2 py-0.5 rounded-full text-xs font-bold">
-                  {points} pts
-                </span>
+                <span className={`${getLevelTier(level).bg} ${getLevelTier(level).color} px-2 py-0.5 rounded-full text-xs font-bold`}>{getLevelTier(level).icon} Level {level}</span>
+                <span className="bg-white bg-opacity-20 px-2 py-0.5 rounded-full text-xs font-bold">{points} pts</span>
               </div>
             </div>
           </div>
         </div>
 
-        {/* Quick stats strip */}
         <div className="bg-white border-b border-gray-200 px-6 py-4">
           <div className="grid grid-cols-3 gap-4 text-center">
-            <div>
-              <p className="text-2xl font-bold text-blue-600">{getDaysClean()}</p>
-              <p className="text-xs text-gray-500">Days clean</p>
-            </div>
-            <div>
-              <p className="text-2xl font-bold text-purple-600">{journalEntries.length}</p>
-              <p className="text-xs text-gray-500">Journal entries</p>
-            </div>
-            <div>
-              <p className="text-2xl font-bold text-yellow-600">{earnedBadges.length}</p>
-              <p className="text-xs text-gray-500">Badges</p>
-            </div>
+            <div><p className="text-2xl font-bold text-blue-600">{getDaysClean()}</p><p className="text-xs text-gray-500">Days clean</p></div>
+            <div><p className="text-2xl font-bold text-purple-600">{journalEntries.length}</p><p className="text-xs text-gray-500">Journal entries</p></div>
+            <div><p className="text-2xl font-bold text-yellow-600">{earnedBadges.length}</p><p className="text-xs text-gray-500">Badges</p></div>
           </div>
         </div>
 
         <div className="flex-1 p-6 overflow-y-auto">
           <div className="max-w-md mx-auto space-y-5">
 
-            {/* Recovery timer card */}
             <div className="bg-white rounded-xl shadow-md p-5">
               <h3 className="font-bold text-gray-800 mb-3">Recovery Timer</h3>
               <div className="flex items-center justify-between">
                 <div>
                   <p className="text-3xl font-bold text-blue-600">{getDaysClean()} days</p>
-                  <p className="text-sm text-gray-500">
-                    Since {new Date(startDate).toLocaleDateString('en-AU', { day: 'numeric', month: 'long', year: 'numeric' })}
-                  </p>
+                  <p className="text-sm text-gray-500">Since {new Date(startDate).toLocaleDateString('en-AU', { day: 'numeric', month: 'long', year: 'numeric' })}</p>
                 </div>
-                <button
-                  onClick={() => setShowResetModal(true)}
-                  className="text-xs text-gray-400 hover:text-gray-600 border border-gray-200 rounded-lg px-3 py-2"
-                >
-                  Reset
-                </button>
+                <button onClick={() => setShowResetModal(true)} className="text-xs text-gray-400 hover:text-gray-600 border border-gray-200 rounded-lg px-3 py-2">Reset</button>
               </div>
             </div>
 
-            {/* Badges */}
             <div className="bg-white rounded-xl shadow-md p-5">
               <div className="flex items-center justify-between mb-4">
                 <h3 className="font-bold text-gray-800">Badges</h3>
@@ -6673,18 +6668,13 @@ export default function BeatTheBet() {
                 {allBadges.map((badge) => {
                   const earned = earnedBadges.includes(badge.id);
                   return (
-                    <div
-                      key={badge.id}
-                      className={`rounded-xl p-3 text-center ${earned ? 'bg-yellow-50 border-2 border-yellow-200' : 'bg-gray-50 opacity-40'}`}
-                      title={badge.description}
-                    >
+                    <div key={badge.id} className={`rounded-xl p-3 text-center ${earned ? 'bg-yellow-50 border-2 border-yellow-200' : 'bg-gray-50 opacity-40'}`} title={badge.description}>
                       <div className="text-2xl mb-1">{earned ? badge.icon : '—'}</div>
                       <div className="text-xs font-semibold text-gray-700 leading-tight">{badge.name}</div>
                     </div>
                   );
                 })}
               </div>
-              {/* Next badge hint */}
               {(() => {
                 const daysClean = getDaysClean();
                 const next = allBadges.find(b => !earnedBadges.includes(b.id) && typeof b.requirement === 'number');
@@ -6695,63 +6685,38 @@ export default function BeatTheBet() {
                 if (remaining <= 0) return null;
                 return (
                   <div className="mt-3 bg-blue-50 rounded-lg p-3">
-                    <p className="text-xs text-blue-700">
-                      <strong>{next.name}</strong> — {remaining} more {isJournal ? 'journal entries' : 'days'} to go
-                    </p>
+                    <p className="text-xs text-blue-700"><strong>{next.name}</strong> — {remaining} more {isJournal ? 'journal entries' : 'days'} to go</p>
                   </div>
                 );
               })()}
             </div>
 
-            {/* My Interests */}
-            <button
-              onClick={() => setShowInterests(true)}
-              className="w-full bg-white rounded-xl shadow-md p-5 hover:shadow-lg transition-all text-left"
-            >
+            <button onClick={() => setShowInterests(true)} className="w-full bg-white rounded-xl shadow-md p-5 hover:shadow-lg transition-all text-left">
               <div className="flex items-center justify-between">
                 <div>
                   <h3 className="font-bold text-gray-800 mb-1">My Interests</h3>
-                  <p className="text-sm text-gray-500">
-                    {selectedInterests.length === 0
-                      ? 'None selected — tap to add'
-                      : selectedInterests.length + ' selected'}
-                  </p>
+                  <p className="text-sm text-gray-500">{selectedInterests.length === 0 ? 'None selected — tap to add' : selectedInterests.length + ' selected'}</p>
                 </div>
                 <ChevronRight className="w-5 h-5 text-gray-400" />
               </div>
             </button>
 
-            {/* Why I'm Quitting preview */}
-            <button
-              onClick={() => { setActiveTab('resources'); setActiveTool('why-quitting'); }}
-              className="w-full bg-white rounded-xl shadow-md p-5 hover:shadow-lg transition-all text-left"
-            >
+            <button onClick={() => { setActiveTab('resources'); setActiveTool('why-quitting'); }} className="w-full bg-white rounded-xl shadow-md p-5 hover:shadow-lg transition-all text-left">
               <div className="flex items-center justify-between">
                 <div>
                   <h3 className="font-bold text-gray-800 mb-1">Why I'm Quitting</h3>
-                  <p className="text-sm text-gray-500">
-                    {whyImQuitting.primaryReason
-                      ? `"${whyImQuitting.primaryReason.slice(0, 50)}${whyImQuitting.primaryReason.length > 50 ? '...' : ''}"`
-                      : 'Add your reasons — tap to open'}
-                  </p>
+                  <p className="text-sm text-gray-500">{whyImQuitting.primaryReason ? `"${whyImQuitting.primaryReason.slice(0, 50)}${whyImQuitting.primaryReason.length > 50 ? '...' : ''}"` : 'Add your reasons — tap to open'}</p>
                 </div>
                 <ChevronRight className="w-5 h-5 text-gray-400" />
               </div>
             </button>
 
-            {/* Settings & Logout */}
             <div className="bg-white rounded-xl shadow-md overflow-hidden">
-              <button
-                onClick={() => { setActiveTab('resources'); setActiveTool('settings'); }}
-                className="w-full flex items-center justify-between p-5 hover:bg-gray-50 transition-colors border-b border-gray-100"
-              >
+              <button onClick={() => { setActiveTab('resources'); setActiveTool('settings'); }} className="w-full flex items-center justify-between p-5 hover:bg-gray-50 transition-colors border-b border-gray-100">
                 <span className="font-semibold text-gray-800">Settings</span>
                 <ChevronRight className="w-5 h-5 text-gray-400" />
               </button>
-              <button
-                onClick={logout}
-                className="w-full flex items-center justify-between p-5 hover:bg-red-50 transition-colors"
-              >
+              <button onClick={logout} className="w-full flex items-center justify-between p-5 hover:bg-red-50 transition-colors">
                 <span className="font-semibold text-red-600">Log Out</span>
                 <ChevronRight className="w-5 h-5 text-red-300" />
               </button>
@@ -6774,11 +6739,19 @@ export default function BeatTheBet() {
     const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
 
     const saveUsername = () => {
-      if (tempUsername.trim()) {
-        setUsername(tempUsername.trim());
-        localStorage.setItem('username', tempUsername.trim());
-        showSuccess('Username updated!');
+      const trimmed = tempUsername.trim();
+      if (!trimmed || trimmed.length < 2) {
+        showError('Username must be at least 2 characters');
+        return;
       }
+      setUsername(trimmed);
+      localStorage.setItem('username', trimmed);
+      // Also update currentUser
+      const updatedUser = { ...currentUser, username: trimmed };
+      setCurrentUser(updatedUser);
+      localStorage.setItem('currentUser', JSON.stringify(updatedUser));
+      syncProfileToSupabase({ username: trimmed }).catch(() => {});
+      showSuccess('Username updated!');
       setEditingUsername(false);
     };
 
@@ -7824,59 +7797,49 @@ Keep going! Every day counts. 💪
 
   // Profile Setup Screen
   const ProfileSetupScreen = () => {
-    const [profileData, setProfileData] = useState({
-      username: '',
-      ageRange: '26-35',
-      city: '',
-      quitDate: new Date().toISOString().split('T')[0]
-    });
-    const [errors, setErrors] = useState({});
-    const [loading, setLoading] = useState(false);
+    // Use separate local state for each field to prevent re-render resets
+    const [usernameValue, setUsernameValue] = React.useState('');
+    const [usernameError, setUsernameError] = React.useState('');
+    const [loading, setLoading] = React.useState(false);
 
     const handleComplete = async () => {
-      setErrors({});
-      
-      // Validation
-      const validationErrors = validateForm({
-        username: { value: profileData.username, rules: ['required', { type: 'minLength', value: 2 }] }
-      });
-      
-      if (Object.keys(validationErrors).length > 0) {
-        setErrors(validationErrors);
-        showError('Please enter a username (at least 2 characters)');
+      setUsernameError('');
+
+      const trimmed = usernameValue.trim();
+      if (!trimmed || trimmed.length < 2) {
+        setUsernameError('Username must be at least 2 characters');
         return;
       }
-      
+      if (trimmed.length > 30) {
+        setUsernameError('Username must be 30 characters or less');
+        return;
+      }
+
       setLoading(true);
-      
-      // Simulate saving
-      await new Promise(resolve => setTimeout(resolve, 500));
-      
+
       // Update user profile
       const updatedUser = {
         ...currentUser,
-        username: profileData.username,
+        username: trimmed,
         profileComplete: true
       };
-      
+
       setCurrentUser(updatedUser);
       localStorage.setItem('currentUser', JSON.stringify(updatedUser));
-      
-      // Update global state
-      setUsername(profileData.username);
-      setUserAgeRange(profileData.ageRange);
 
-      localStorage.setItem('username', profileData.username);
-      localStorage.setItem('userAgeRange', profileData.ageRange);
+      // Update global username state
+      setUsername(trimmed);
+      localStorage.setItem('username', trimmed);
 
       // Sync to Supabase
-      await syncProfileToSupabase({
-        username: profileData.username,
-        age_range: profileData.ageRange,
-      });
+      try {
+        await syncProfileToSupabase({ username: trimmed });
+      } catch (e) {
+        console.warn('Profile sync failed:', e);
+      }
 
       setLoading(false);
-      showSuccess('Profile completed! Welcome to Beat the Bet!');
+      showSuccess('Welcome to Beat the Bet!');
     };
 
     if (loading) {
@@ -7887,50 +7850,35 @@ Keep going! Every day counts. 💪
       <div className="min-h-screen bg-gradient-to-b from-blue-50 to-purple-50 flex items-center justify-center p-6">
         <div className="max-w-md w-full bg-white rounded-2xl shadow-xl p-8">
           <div className="text-center mb-8">
-            <h1 className="text-2xl font-bold text-gray-900 mb-2">Welcome!</h1>
-            <p className="text-gray-600">Let's set up your profile</p>
+            <h1 className="text-2xl font-bold text-gray-900 mb-2">One last thing</h1>
+            <p className="text-gray-600">Choose a username for your profile and the community chat</p>
           </div>
 
           <div className="space-y-4">
-            {/* Username */}
             <div>
               <label htmlFor="profile-username" className="block text-sm font-semibold text-gray-700 mb-2">
-                Username <span className="text-red-500">*</span>
+                Username
               </label>
               <input
                 id="profile-username"
                 name="username"
                 type="text"
-                value={profileData.username}
-                onChange={(e) => setProfileData({ ...profileData, username: e.target.value })}
+                autoComplete="username"
+                value={usernameValue}
+                onChange={(e) => setUsernameValue(e.target.value)}
+                onKeyPress={(e) => e.key === 'Enter' && handleComplete()}
                 className={`w-full p-3 border rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent ${
-                  errors.username ? 'border-red-500' : 'border-gray-300'
+                  usernameError ? 'border-red-500' : 'border-gray-300'
                 }`}
-                placeholder="Choose a username"
+                placeholder="e.g. RecoveryRoad, CleanSlate..."
+                maxLength={30}
               />
-              {errors.username && (
-                <p className="text-red-500 text-xs mt-1">{errors.username}</p>
+              {usernameError && (
+                <p className="text-red-500 text-xs mt-1">{usernameError}</p>
               )}
-            </div>
-
-            {/* Age Range */}
-            <div>
-              <label htmlFor="profile-age" className="block text-sm font-semibold text-gray-700 mb-2">
-                Age Range <span className="text-red-500">*</span>
-              </label>
-              <select
-                id="profile-age"
-                name="ageRange"
-                value={profileData.ageRange}
-                onChange={(e) => setProfileData({ ...profileData, ageRange: e.target.value })}
-                className="w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
-              >
-                <option value="18-25">18-25</option>
-                <option value="26-35">26-35</option>
-                <option value="36-45">36-45</option>
-                <option value="46-55">46-55</option>
-                <option value="56+">56+</option>
-              </select>
+              <p className="text-xs text-gray-400 mt-1">
+                This will be visible in community chat. Don't use your real name.
+              </p>
             </div>
 
             <div className="bg-yellow-50 border-l-4 border-yellow-500 rounded-lg p-3">
@@ -7939,13 +7887,12 @@ Keep going! Every day counts. 💪
               </p>
             </div>
 
-            {/* Submit */}
             <button
               onClick={handleComplete}
-              disabled={loading}
-              className="w-full bg-gradient-to-r from-blue-600 to-purple-600 hover:from-blue-700 hover:to-purple-700 disabled:from-gray-300 disabled:to-gray-400 text-white py-4 rounded-xl font-bold text-lg transition-all shadow-lg mt-6"
+              disabled={loading || usernameValue.trim().length < 2}
+              className="w-full bg-gradient-to-r from-blue-600 to-purple-600 hover:from-blue-700 hover:to-purple-700 disabled:from-gray-300 disabled:to-gray-400 text-white py-4 rounded-xl font-bold text-lg transition-all shadow-lg mt-2"
             >
-              Complete Profile
+              Get Started
             </button>
           </div>
         </div>
@@ -8218,9 +8165,6 @@ Keep going! Every day counts. 💪
 
 
 
-  // ============================================================
-  // Admin Panel Component
-  // ============================================================
   const AdminPanel = () => {
     const [flaggedMessages, setFlaggedMessages] = React.useState([]);
     const [userStats, setUserStats] = React.useState(null);
@@ -8228,35 +8172,49 @@ Keep going! Every day counts. 💪
     const [newAdminEmail, setNewAdminEmail] = React.useState('');
     const [activeAdminTab, setActiveAdminTab] = React.useState('messages');
 
-    React.useEffect(() => {
-      loadAdminData();
-    }, []);
+    React.useEffect(() => { loadAdminData(); }, []);
 
     const loadAdminData = async () => {
       setLoading(true);
       const session = supabase.getSession();
-      if (!session) return;
+      if (!session) { setLoading(false); return; }
       const token = session.access_token;
+      const headers = { 'apikey': SUPABASE_ANON_KEY, 'Authorization': `Bearer ${token}` };
 
       try {
-        // Load flagged messages
+        // Flagged messages - admin can see all
         const msgRes = await fetch(
           `${SUPABASE_URL}/rest/v1/messages?flagged=eq.true&order=created_at.desc&limit=100`,
-          { headers: { 'apikey': SUPABASE_ANON_KEY, 'Authorization': `Bearer ${token}` } }
+          { headers }
         );
-        if (msgRes.ok) setFlaggedMessages(await msgRes.json());
+        if (msgRes.ok) {
+          const msgs = await msgRes.json();
+          setFlaggedMessages(Array.isArray(msgs) ? msgs : []);
+        }
 
-        // Load user stats
+        // All profiles
         const userRes = await fetch(
-          `${SUPABASE_URL}/rest/v1/profiles?select=id,username,created_at,points,level`,
-          { headers: { 'apikey': SUPABASE_ANON_KEY, 'Authorization': `Bearer ${token}` } }
+          `${SUPABASE_URL}/rest/v1/profiles?select=id,username,created_at,points,level&order=created_at.desc&limit=100`,
+          { headers }
         );
         if (userRes.ok) {
           const users = await userRes.json();
-          setUserStats({
-            total: users.length,
-            users: users.sort((a, b) => new Date(b.created_at) - new Date(a.created_at))
-          });
+          const safeUsers = Array.isArray(users) ? users : [];
+          setUserStats({ total: safeUsers.length, users: safeUsers });
+        }
+
+        // Admin list from Supabase
+        const adminRes = await fetch(
+          `${SUPABASE_URL}/rest/v1/admins?select=email,added_at&order=added_at.asc`,
+          { headers }
+        );
+        if (adminRes.ok) {
+          const admins = await adminRes.json();
+          if (Array.isArray(admins)) {
+            const emails = admins.map(a => a.email);
+            setAdminEmails(emails);
+            localStorage.setItem('adminEmails', JSON.stringify(emails));
+          }
         }
       } catch (e) {
         console.error('Admin load error:', e);
@@ -8266,14 +8224,9 @@ Keep going! Every day counts. 💪
 
     const approveMessage = async (msg) => {
       const session = supabase.getSession();
-      const token = session.access_token;
       await fetch(`${SUPABASE_URL}/rest/v1/messages?id=eq.${msg.id}`, {
         method: 'PATCH',
-        headers: {
-          'apikey': SUPABASE_ANON_KEY,
-          'Authorization': `Bearer ${token}`,
-          'Content-Type': 'application/json'
-        },
+        headers: { 'apikey': SUPABASE_ANON_KEY, 'Authorization': `Bearer ${session.access_token}`, 'Content-Type': 'application/json' },
         body: JSON.stringify({ flagged: false })
       });
       setFlaggedMessages(prev => prev.filter(m => m.id !== msg.id));
@@ -8282,162 +8235,120 @@ Keep going! Every day counts. 💪
 
     const deleteMessage = async (msg) => {
       const session = supabase.getSession();
-      const token = session.access_token;
       await fetch(`${SUPABASE_URL}/rest/v1/messages?id=eq.${msg.id}`, {
         method: 'DELETE',
-        headers: { 'apikey': SUPABASE_ANON_KEY, 'Authorization': `Bearer ${token}` }
+        headers: { 'apikey': SUPABASE_ANON_KEY, 'Authorization': `Bearer ${session.access_token}` }
       });
       setFlaggedMessages(prev => prev.filter(m => m.id !== msg.id));
       showSuccess('Message deleted.');
     };
 
-    const addAdminEmail = () => {
-      if (!newAdminEmail.trim() || !validators.email(newAdminEmail.trim())) {
-        showError('Please enter a valid email address.');
-        return;
+    const addAdminEmail = async () => {
+      const trimmed = newAdminEmail.trim().toLowerCase();
+      if (!trimmed || !validators.email(trimmed)) { showError('Enter a valid email.'); return; }
+      if (adminEmails.includes(trimmed)) { showError('That email is already an admin.'); return; }
+
+      const session = supabase.getSession();
+      try {
+        const res = await fetch(`${SUPABASE_URL}/rest/v1/admins`, {
+          method: 'POST',
+          headers: {
+            'apikey': SUPABASE_ANON_KEY,
+            'Authorization': `Bearer ${session.access_token}`,
+            'Content-Type': 'application/json',
+            'Prefer': 'return=representation'
+          },
+          body: JSON.stringify({ email: trimmed })
+        });
+        if (!res.ok) {
+          const err = await res.json();
+          showError(err.message || 'Failed to add admin.');
+          return;
+        }
+        const updated = [...adminEmails, trimmed];
+        setAdminEmails(updated);
+        localStorage.setItem('adminEmails', JSON.stringify(updated));
+        setNewAdminEmail('');
+        showSuccess(`${trimmed} added as admin.`);
+      } catch (e) {
+        showError('Failed to add admin.');
       }
-      const updated = [...adminEmails, newAdminEmail.trim().toLowerCase()];
-      setAdminEmails(updated);
-      localStorage.setItem('adminEmails', JSON.stringify(updated));
-      setNewAdminEmail('');
-      showSuccess(`${newAdminEmail.trim()} added as admin.`);
     };
 
-    const removeAdminEmail = (email) => {
+    const removeAdminEmail = async (email) => {
       const session = supabase.getSession();
       if (session && session.user.email.toLowerCase() === email.toLowerCase()) {
-        showError("You can't remove yourself as admin.");
+        showError("You can't remove yourself.");
         return;
       }
-      const updated = adminEmails.filter(e => e.toLowerCase() !== email.toLowerCase());
-      setAdminEmails(updated);
-      localStorage.setItem('adminEmails', JSON.stringify(updated));
+      try {
+        const res = await fetch(
+          `${SUPABASE_URL}/rest/v1/admins?email=eq.${encodeURIComponent(email)}`,
+          {
+            method: 'DELETE',
+            headers: { 'apikey': SUPABASE_ANON_KEY, 'Authorization': `Bearer ${session.access_token}` }
+          }
+        );
+        if (!res.ok) { showError('Failed to remove admin.'); return; }
+        const updated = adminEmails.filter(e => e !== email);
+        setAdminEmails(updated);
+        localStorage.setItem('adminEmails', JSON.stringify(updated));
+        showSuccess('Admin removed.');
+      } catch (e) {
+        showError('Failed to remove admin.');
+      }
     };
 
-    const formatDate = (ts) => new Date(ts).toLocaleDateString('en-AU', {
-      day: 'numeric', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit'
-    });
+    const formatDate = (ts) => new Date(ts).toLocaleDateString('en-AU', { day: 'numeric', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' });
 
     return (
       <div className="flex flex-col min-h-screen bg-gray-50 pb-20">
         <div className="bg-gray-900 text-white p-6">
-          <button onClick={() => setActiveTool(null)} className="flex items-center mb-4 hover:opacity-80">
-            <ArrowLeft className="w-5 h-5 mr-2" />
-            <span>Back</span>
-          </button>
+          <button onClick={() => setActiveTool(null)} className="flex items-center mb-4 hover:opacity-80"><ArrowLeft className="w-5 h-5 mr-2" /><span>Back</span></button>
           <h1 className="text-2xl font-bold">Admin Panel</h1>
           <p className="text-sm opacity-70">Beat the Bet — moderation & management</p>
         </div>
-
-        {/* Tabs */}
         <div className="bg-white border-b border-gray-200 px-4 py-3">
           <div className="flex gap-2">
-            {[
-              { id: 'messages', label: `Flagged (${flaggedMessages.length})` },
-              { id: 'users', label: `Users (${userStats?.total || 0})` },
-              { id: 'admins', label: 'Admins' },
-            ].map(tab => (
-              <button
-                key={tab.id}
-                onClick={() => setActiveAdminTab(tab.id)}
-                className={`px-4 py-2 rounded-lg font-semibold text-sm transition-colors ${
-                  activeAdminTab === tab.id ? 'bg-gray-900 text-white' : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
-                }`}
-              >
-                {tab.label}
-              </button>
+            {[{ id: 'messages', label: `Flagged (${flaggedMessages.length})` }, { id: 'users', label: `Users (${userStats?.total || 0})` }, { id: 'admins', label: 'Admins' }].map(tab => (
+              <button key={tab.id} onClick={() => setActiveAdminTab(tab.id)} className={`px-4 py-2 rounded-lg font-semibold text-sm ${activeAdminTab === tab.id ? 'bg-gray-900 text-white' : 'bg-gray-100 text-gray-700'}`}>{tab.label}</button>
             ))}
-            <button
-              onClick={loadAdminData}
-              className="ml-auto px-3 py-2 rounded-lg text-sm bg-blue-100 text-blue-700 hover:bg-blue-200 font-semibold"
-            >
-              Refresh
-            </button>
+            <button onClick={loadAdminData} className="ml-auto px-3 py-2 rounded-lg text-sm bg-blue-100 text-blue-700 font-semibold">Refresh</button>
           </div>
         </div>
-
         <div className="flex-1 p-6 overflow-y-auto">
           <div className="max-w-2xl mx-auto">
-
-            {loading && (
-              <div className="text-center py-12">
-                <div className="w-8 h-8 border-4 border-gray-200 border-t-gray-800 rounded-full animate-spin mx-auto mb-3"></div>
-                <p className="text-gray-500">Loading...</p>
-              </div>
-            )}
-
-            {/* Flagged Messages */}
+            {loading && <div className="text-center py-12"><div className="w-8 h-8 border-4 border-gray-200 border-t-gray-800 rounded-full animate-spin mx-auto mb-3"></div><p className="text-gray-500">Loading...</p></div>}
             {!loading && activeAdminTab === 'messages' && (
               <div className="space-y-4">
-                <p className="text-sm text-gray-500">
-                  {flaggedMessages.length === 0
-                    ? 'No flagged messages. All clear.'
-                    : `${flaggedMessages.length} message${flaggedMessages.length !== 1 ? 's' : ''} awaiting review.`}
-                </p>
+                <p className="text-sm text-gray-500">{flaggedMessages.length === 0 ? 'No flagged messages.' : `${flaggedMessages.length} awaiting review.`}</p>
                 {flaggedMessages.map(msg => (
                   <div key={msg.id} className="bg-white rounded-xl shadow-md p-5 border-l-4 border-red-400">
-                    <div className="flex items-start justify-between mb-3">
-                      <div>
-                        <p className="font-semibold text-gray-800">{msg.username}</p>
-                        <p className="text-xs text-gray-400">{formatDate(msg.created_at)} · #{msg.room}</p>
-                      </div>
-                    </div>
+                    <div className="mb-2"><p className="font-semibold text-gray-800">{msg.username}</p><p className="text-xs text-gray-400">{formatDate(msg.created_at)} · #{msg.room}</p></div>
                     <p className="text-gray-700 bg-gray-50 rounded-lg p-3 mb-4 text-sm">{msg.message}</p>
                     <div className="flex gap-2">
-                      <button
-                        onClick={() => approveMessage(msg)}
-                        className="flex-1 bg-green-500 hover:bg-green-600 text-white rounded-lg py-2 font-semibold text-sm"
-                      >
-                        Restore
-                      </button>
-                      <button
-                        onClick={() => deleteMessage(msg)}
-                        className="flex-1 bg-red-500 hover:bg-red-600 text-white rounded-lg py-2 font-semibold text-sm"
-                      >
-                        Delete
-                      </button>
+                      <button onClick={() => approveMessage(msg)} className="flex-1 bg-green-500 hover:bg-green-600 text-white rounded-lg py-2 font-semibold text-sm">Restore</button>
+                      <button onClick={() => deleteMessage(msg)} className="flex-1 bg-red-500 hover:bg-red-600 text-white rounded-lg py-2 font-semibold text-sm">Delete</button>
                     </div>
                   </div>
                 ))}
               </div>
             )}
-
-            {/* Users */}
             {!loading && activeAdminTab === 'users' && userStats && (
               <div className="space-y-3">
                 <div className="grid grid-cols-2 gap-4 mb-4">
-                  <div className="bg-white rounded-xl shadow-md p-5 text-center">
-                    <p className="text-3xl font-bold text-gray-800">{userStats.total}</p>
-                    <p className="text-sm text-gray-500">Total users</p>
-                  </div>
-                  <div className="bg-white rounded-xl shadow-md p-5 text-center">
-                    <p className="text-3xl font-bold text-blue-600">
-                      {userStats.users.filter(u => {
-                        const d = new Date(u.created_at);
-                        const now = new Date();
-                        return (now - d) < 7 * 24 * 60 * 60 * 1000;
-                      }).length}
-                    </p>
-                    <p className="text-sm text-gray-500">New this week</p>
-                  </div>
+                  <div className="bg-white rounded-xl shadow-md p-5 text-center"><p className="text-3xl font-bold text-gray-800">{userStats.total}</p><p className="text-sm text-gray-500">Total users</p></div>
+                  <div className="bg-white rounded-xl shadow-md p-5 text-center"><p className="text-3xl font-bold text-blue-600">{userStats.users.filter(u => (new Date() - new Date(u.created_at)) < 7*24*60*60*1000).length}</p><p className="text-sm text-gray-500">New this week</p></div>
                 </div>
                 <h3 className="font-bold text-gray-800">Recent signups</h3>
                 {userStats.users.slice(0, 20).map(user => (
                   <div key={user.id} className="bg-white rounded-xl shadow-sm p-4 flex items-center justify-between">
-                    <div>
-                      <p className="font-semibold text-gray-800">{user.username || 'No username'}</p>
-                      <p className="text-xs text-gray-400">{formatDate(user.created_at)}</p>
-                    </div>
-                    <div className="text-right">
-                      <p className="text-sm font-semibold text-purple-600">Lvl {user.level}</p>
-                      <p className="text-xs text-gray-400">{user.points} pts</p>
-                    </div>
+                    <div><p className="font-semibold text-gray-800">{user.username || 'No username'}</p><p className="text-xs text-gray-400">{formatDate(user.created_at)}</p></div>
+                    <div className="text-right"><p className="text-sm font-semibold text-purple-600">Lvl {user.level}</p><p className="text-xs text-gray-400">{user.points} pts</p></div>
                   </div>
                 ))}
               </div>
             )}
-
-            {/* Admins */}
             {!loading && activeAdminTab === 'admins' && (
               <div className="space-y-4">
                 <div className="bg-white rounded-xl shadow-md p-5">
@@ -8446,43 +8357,23 @@ Keep going! Every day counts. 💪
                     {adminEmails.map(email => (
                       <div key={email} className="flex items-center justify-between p-3 bg-gray-50 rounded-lg">
                         <span className="text-sm font-medium text-gray-800">{email}</span>
-                        <button
-                          onClick={() => removeAdminEmail(email)}
-                          className="text-red-400 hover:text-red-600 text-sm font-semibold"
-                        >
-                          Remove
-                        </button>
+                        <button onClick={() => removeAdminEmail(email)} className="text-red-400 hover:text-red-600 text-sm font-semibold">Remove</button>
                       </div>
                     ))}
                   </div>
                   <div className="border-t border-gray-200 pt-4">
                     <p className="text-sm font-semibold text-gray-700 mb-2">Add admin email</p>
                     <div className="flex gap-2">
-                      <input
-                        type="email"
-                        value={newAdminEmail}
-                        onChange={(e) => setNewAdminEmail(e.target.value)}
-                        onKeyPress={(e) => e.key === 'Enter' && addAdminEmail()}
-                        placeholder="email@example.com"
-                        className="flex-1 p-2.5 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-gray-800 focus:border-transparent"
-                      />
-                      <button
-                        onClick={addAdminEmail}
-                        className="bg-gray-900 hover:bg-gray-700 text-white px-4 rounded-lg font-semibold text-sm"
-                      >
-                        Add
-                      </button>
+                      <input type="email" value={newAdminEmail} onChange={(e) => setNewAdminEmail(e.target.value)} onKeyPress={(e) => e.key === 'Enter' && addAdminEmail()} placeholder="email@example.com" className="flex-1 p-2.5 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-gray-800" />
+                      <button onClick={addAdminEmail} className="bg-gray-900 hover:bg-gray-700 text-white px-4 rounded-lg font-semibold text-sm">Add</button>
                     </div>
                   </div>
                 </div>
                 <div className="bg-yellow-50 border-l-4 border-yellow-500 rounded-lg p-4">
-                  <p className="text-sm text-gray-700">
-                    Admin access is stored locally on this device. To give someone else admin access, add their email here on your device — they will see the admin button when logged in with that email.
-                  </p>
+                  <p className="text-sm text-gray-700">Admin access is stored locally. Add an email here and that user will see the Admin Panel when logged in.</p>
                 </div>
               </div>
             )}
-
           </div>
         </div>
       </div>
