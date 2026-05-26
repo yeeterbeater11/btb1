@@ -204,6 +204,34 @@ const supabase = (() => {
       })
     }),
 
+    // Realtime subscription for chat
+    realtime: {
+      subscribeToMessages: (room, callback) => {
+        // Poll every 3 seconds as a realtime substitute
+        // (True Supabase realtime requires websocket which needs the JS SDK)
+        const interval = setInterval(async () => {
+          try {
+            const session = localStorage.getItem('sb_session');
+            const token = session ? JSON.parse(session).access_token : SUPABASE_ANON_KEY;
+            const res = await fetch(
+              `${SUPABASE_URL}/rest/v1/messages?room=eq.${encodeURIComponent(room)}&order=created_at.asc&limit=50`,
+              {
+                headers: {
+                  'apikey': SUPABASE_ANON_KEY,
+                  'Authorization': `Bearer ${token}`
+                }
+              }
+            );
+            if (res.ok) {
+              const data = await res.json();
+              callback(data);
+            }
+          } catch (e) {}
+        }, 3000);
+        return () => clearInterval(interval);
+      }
+    },
+
     // Storage helpers
     storage: {
       from: (bucket) => ({
@@ -3934,129 +3962,235 @@ export default function BeatTheBet() {
   };
 
   const CommunityChatPage = () => {
-    const [newMessage, setNewMessage] = useState('');
-    const [showUsernameSetup, setShowUsernameSetup] = useState(!hasSetUsername);
-    const [tempUsername, setTempUsername] = useState('');
+    const [newMessage, setNewMessage] = React.useState('');
+    const [showUsernameSetup, setShowUsernameSetup] = React.useState(!hasSetUsername);
+    const [tempUsername, setTempUsername] = React.useState('');
+    const [messages, setMessages] = React.useState([]);
+    const [loadingMessages, setLoadingMessages] = React.useState(true);
+    const [sending, setSending] = React.useState(false);
+    const [lastSentAt, setLastSentAt] = React.useState(0);
+    const [reportedIds, setReportedIds] = React.useState(() => {
+      const saved = localStorage.getItem('reportedMessageIds');
+      return saved ? JSON.parse(saved) : [];
+    });
     const messagesEndRef = React.useRef(null);
+    const unsubscribeRef = React.useRef(null);
 
-    // Demo messages for each room (simulating real chat)
-    const demoMessages = {
-      general: [
-        { id: 1, username: 'RecoveryWarrior', message: 'Day 45 today. Feeling strong! 💪', timestamp: '2 hours ago', isOwn: false },
-        { id: 2, username: 'FreshStart2024', message: 'Welcome everyone! Remember why you started.', timestamp: '1 hour ago', isOwn: false },
-        { id: 3, username: 'Anonymous_7832', message: 'First time here. Nervous but hopeful.', timestamp: '45 min ago', isOwn: false },
-        { id: 4, username: 'CleanAndProud', message: '@Anonymous_7832 You got this! We\'re all here for you.', timestamp: '30 min ago', isOwn: false },
-        { id: 5, username: 'Milestone100', message: '🎉 Hit 100 days today! Never thought I\'d make it this far.', timestamp: '20 min ago', isOwn: false },
-        { id: 6, username: 'StayingStrong', message: 'Congrats! That\'s amazing! What helped you the most?', timestamp: '15 min ago', isOwn: false },
-      ],
-      cravings: [
-        { id: 1, username: 'NeedSupport', message: 'Having a rough day. Urge is strong right now.', timestamp: '30 min ago', isOwn: false },
-        { id: 2, username: 'SoberSoul', message: 'Breathe. It will pass. You\'ve made it this far.', timestamp: '25 min ago', isOwn: false },
-        { id: 3, username: 'RecoveryPath', message: 'Call the helpline if you need to talk. 1800 858 858', timestamp: '20 min ago', isOwn: false },
-        { id: 4, username: 'OneDay_1', message: 'Go for a walk. Put your shoes on right now. Trust me.', timestamp: '15 min ago', isOwn: false },
-        { id: 5, username: 'NeedSupport', message: 'Thanks everyone. Going for that walk now. 🙏', timestamp: '10 min ago', isOwn: false },
-      ],
-      fitness: [
-        { id: 1, username: 'GymRat92', message: 'Just finished a 5k run. Feel amazing!', timestamp: '1 hour ago', isOwn: false },
-        { id: 2, username: 'YogaJourney', message: 'Anyone else doing morning yoga? Game changer for my anxiety.', timestamp: '45 min ago', isOwn: false },
-        { id: 3, username: 'CleanLifter', message: 'Hit a new bench press PR today. Channeling that energy right.', timestamp: '30 min ago', isOwn: false },
-        { id: 4, username: 'WalkingDaily', message: 'Even just 20 min walks help me so much. Don\'t need to go hard.', timestamp: '15 min ago', isOwn: false },
-      ],
-      cooking: [
-        { id: 1, username: 'ChefInRecovery', message: 'Made homemade pasta tonight instead of ordering takeout!', timestamp: '2 hours ago', isOwn: false },
-        { id: 2, username: 'HealthyEater', message: 'Meal prepping Sundays has saved me so much money.', timestamp: '1 hour ago', isOwn: false },
-        { id: 3, username: 'BakingTherapy', message: 'Baking bread is so therapeutic. Highly recommend.', timestamp: '40 min ago', isOwn: false },
-        { id: 4, username: 'CookingDad', message: 'Teaching my kids to cook. Quality time + saving money.', timestamp: '20 min ago', isOwn: false },
-      ],
-      music: [
-        { id: 1, username: 'MusicHeals', message: 'What are you all listening to today?', timestamp: '1 hour ago', isOwn: false },
-        { id: 2, username: 'GuitarPlayer', message: 'Started learning guitar 30 days ago. Great distraction!', timestamp: '45 min ago', isOwn: false },
-        { id: 3, username: 'PlaylistKing', message: 'Made a "Clean Vibes" playlist. Mostly chill hip-hop.', timestamp: '30 min ago', isOwn: false },
-        { id: 4, username: 'ConcertGoer', message: 'Going to my first concert sober next week. Nervous but excited.', timestamp: '15 min ago', isOwn: false },
-      ],
-      gaming: [
-        { id: 1, username: 'GamerInRecovery', message: 'Anyone playing Elden Ring? Need co-op buddy.', timestamp: '2 hours ago', isOwn: false },
-        { id: 2, username: 'RetroGamer', message: 'Old N64 games hitting different now that I\'m clean.', timestamp: '1 hour ago', isOwn: false },
-        { id: 3, username: 'BoardGameFan', message: 'Started a weekly board game night with friends. So much fun.', timestamp: '40 min ago', isOwn: false },
-        { id: 4, username: 'CleanGamer', message: 'Gaming without gambling feels pure again.', timestamp: '20 min ago', isOwn: false },
-      ],
-      art: [
-        { id: 1, username: 'SketchDaily', message: 'Day 20 of drawing every day. Never stuck with anything this long.', timestamp: '2 hours ago', isOwn: false },
-        { id: 2, username: 'Painter88', message: 'Started with cheap acrylics. Now I\'m obsessed.', timestamp: '1 hour ago', isOwn: false },
-        { id: 3, username: 'DigitalArtist', message: 'Procreate is amazing for beginners. Just saying.', timestamp: '30 min ago', isOwn: false },
-        { id: 4, username: 'CreativeFlow', message: 'Art therapy helped me more than I ever expected.', timestamp: '15 min ago', isOwn: false },
-      ],
-      reading: [
-        { id: 1, username: 'BookwormLife', message: 'Just finished "Atomic Habits". Mind blown.', timestamp: '3 hours ago', isOwn: false },
-        { id: 2, username: 'LibraryCard', message: 'Rediscovered my library card. So many free books!', timestamp: '1 hour ago', isOwn: false },
-        { id: 3, username: 'AudiobookFan', message: 'Audiobooks during walks = perfect combo.', timestamp: '45 min ago', isOwn: false },
-        { id: 4, username: 'SciFiReader', message: 'Any sci-fi recommendations? Need something immersive.', timestamp: '20 min ago', isOwn: false },
-      ],
-      outdoors: [
-        { id: 1, username: 'HikingPath', message: 'Hit a new trail today. 8km through the bush. Incredible.', timestamp: '2 hours ago', isOwn: false },
-        { id: 2, username: 'CampingDad', message: 'Taking the kids camping this weekend. First time in years.', timestamp: '1 hour ago', isOwn: false },
-        { id: 3, username: 'NatureLover', message: 'Just sitting outside helps. Don\'t need a huge adventure.', timestamp: '40 min ago', isOwn: false },
-        { id: 4, username: 'TrailRunner', message: 'Trail running > gym. Fresh air is medicine.', timestamp: '15 min ago', isOwn: false },
-      ],
-      tech: [
-        { id: 1, username: 'CodeNewbie', message: 'Started learning Python. Anyone else coding?', timestamp: '2 hours ago', isOwn: false },
-        { id: 2, username: 'TechGeek', message: 'Built my first PC instead of gambling the money away!', timestamp: '1 hour ago', isOwn: false },
-        { id: 3, username: 'WebDev', message: 'YouTube tutorials are free. Just need time and focus.', timestamp: '30 min ago', isOwn: false },
-        { id: 4, username: 'GadgetReviewer', message: 'Anyone try the new Steam Deck? Worth it?', timestamp: '20 min ago', isOwn: false },
-      ],
-    };
+    // Moderation word filter
+    const bannedWords = [
+      'bet', 'gambling site', 'casino', 'odds', 'stake', 'punter',
+      'http', 'www.', '.com', '.net', '.org', 'click here',
+      'free money', 'win big', 'jackpot', 'deposit bonus'
+    ];
 
-    const [displayMessages, setDisplayMessages] = React.useState([...demoMessages[chatRoom]]);
-
-    React.useEffect(() => {
-      // Update messages when room changes
-      setDisplayMessages([...demoMessages[chatRoom], ...chatMessages.filter(m => m.room === chatRoom)]);
-    }, [chatRoom, chatMessages]);
-
-    React.useEffect(() => {
-      // Auto-scroll to bottom when messages change
-      messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-    }, [displayMessages]);
-
-    const saveUsername = () => {
-      if (tempUsername.trim()) {
-        setUsername(tempUsername.trim());
-        setHasSetUsername(true);
-        localStorage.setItem('chatUsername', tempUsername.trim());
-        setShowUsernameSetup(false);
+    const moderateMessage = (text) => {
+      const lower = text.toLowerCase();
+      for (const word of bannedWords) {
+        if (lower.includes(word)) {
+          return { ok: false, reason: `Messages can't contain "${word}" — this is a recovery space.` };
+        }
       }
-    };
-
-    const sendMessage = () => {
-      if (newMessage.trim() && username) {
-        const message = {
-          id: Date.now(),
-          username: username,
-          message: newMessage.trim(),
-          timestamp: 'Just now',
-          isOwn: true,
-          room: chatRoom
-        };
-        
-        setChatMessages([...chatMessages, message]);
-        setNewMessage('');
-        addPoints(5, 'Sent a message');
-      }
+      if (text.length > 500) return { ok: false, reason: 'Message too long (500 chars max).' };
+      if (text.trim().length < 2) return { ok: false, reason: 'Message too short.' };
+      return { ok: true };
     };
 
     const rooms = [
-      { id: 'general', name: 'General Chat', emoji: '💬', description: 'Daily support, conversation, and celebrating wins' },
+      { id: 'general', name: 'General', emoji: '💬', description: 'Daily support and wins' },
       { id: 'cravings', name: 'Need Support', emoji: '🆘', description: 'Real-time help during urges' },
-      // Interest-based rooms - only show if user has selected that interest
-      ...(selectedInterests.includes('fitness') ? [{ id: 'fitness', name: 'Fitness & Movement', emoji: '🏋️', description: 'Workouts, sports, staying active' }] : []),
-      ...(selectedInterests.includes('cooking') ? [{ id: 'cooking', name: 'Cooking & Food', emoji: '🍳', description: 'Recipes, healthy eating, meal prep' }] : []),
-      ...(selectedInterests.includes('music') ? [{ id: 'music', name: 'Music', emoji: '🎸', description: 'Share songs, playlists, and discover new music' }] : []),
-      ...(selectedInterests.includes('gaming') ? [{ id: 'gaming', name: 'Gaming', emoji: '🎮', description: 'Video games, board games, healthy gaming' }] : []),
-      ...(selectedInterests.includes('art') ? [{ id: 'art', name: 'Art & Creativity', emoji: '🎨', description: 'Drawing, painting, creative projects' }] : []),
-      ...(selectedInterests.includes('reading') ? [{ id: 'reading', name: 'Books & Reading', emoji: '📚', description: 'Book recommendations and discussions' }] : []),
-      ...(selectedInterests.includes('outdoors') ? [{ id: 'outdoors', name: 'Outdoors', emoji: '🏕️', description: 'Hiking, camping, nature adventures' }] : []),
-      ...(selectedInterests.includes('tech') ? [{ id: 'tech', name: 'Tech & Gadgets', emoji: '💻', description: 'Technology, coding, gadgets' }] : []),
+      ...(selectedInterests.includes('fitness') ? [{ id: 'fitness', name: 'Fitness', emoji: '🏋️', description: 'Workouts and movement' }] : []),
+      ...(selectedInterests.includes('cooking') ? [{ id: 'cooking', name: 'Cooking', emoji: '🍳', description: 'Recipes and healthy eating' }] : []),
+      ...(selectedInterests.includes('music') ? [{ id: 'music', name: 'Music', emoji: '🎸', description: 'Share songs and artists' }] : []),
+      ...(selectedInterests.includes('gaming') ? [{ id: 'gaming', name: 'Gaming', emoji: '🎮', description: 'Games and healthy gaming' }] : []),
+      ...(selectedInterests.includes('art') ? [{ id: 'art', name: 'Art', emoji: '🎨', description: 'Creative projects' }] : []),
+      ...(selectedInterests.includes('reading') ? [{ id: 'reading', name: 'Reading', emoji: '📚', description: 'Books and recommendations' }] : []),
     ];
+
+    // Load messages and subscribe to new ones
+    React.useEffect(() => {
+      setLoadingMessages(true);
+      setMessages([]);
+
+      // Unsubscribe from previous room
+      if (unsubscribeRef.current) {
+        unsubscribeRef.current();
+        unsubscribeRef.current = null;
+      }
+
+      // Initial load
+      const loadMessages = async () => {
+        try {
+          const session = supabase.getSession();
+          const token = session ? session.access_token : SUPABASE_ANON_KEY;
+          const res = await fetch(
+            `${SUPABASE_URL}/rest/v1/messages?room=eq.${encodeURIComponent(chatRoom)}&order=created_at.asc&limit=50`,
+            {
+              headers: {
+                'apikey': SUPABASE_ANON_KEY,
+                'Authorization': `Bearer ${token}`
+              }
+            }
+          );
+          if (res.ok) {
+            const data = await res.json();
+            setMessages(data.filter(m => !m.flagged));
+          }
+        } catch (e) {
+          console.warn('Failed to load messages:', e);
+        }
+        setLoadingMessages(false);
+      };
+
+      loadMessages();
+
+      // Poll for new messages every 4 seconds
+      const interval = setInterval(async () => {
+        try {
+          const session = supabase.getSession();
+          const token = session ? session.access_token : SUPABASE_ANON_KEY;
+          const res = await fetch(
+            `${SUPABASE_URL}/rest/v1/messages?room=eq.${encodeURIComponent(chatRoom)}&order=created_at.asc&limit=50`,
+            {
+              headers: {
+                'apikey': SUPABASE_ANON_KEY,
+                'Authorization': `Bearer ${token}`
+              }
+            }
+          );
+          if (res.ok) {
+            const data = await res.json();
+            setMessages(data.filter(m => !m.flagged));
+          }
+        } catch (e) {}
+      }, 4000);
+
+      unsubscribeRef.current = () => clearInterval(interval);
+      return () => clearInterval(interval);
+    }, [chatRoom]);
+
+    // Scroll to bottom when messages change
+    React.useEffect(() => {
+      messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+    }, [messages]);
+
+    const saveUsername = () => {
+      if (tempUsername.trim().length < 2) return;
+      setUsername(tempUsername.trim());
+      setHasSetUsername(true);
+      localStorage.setItem('chatUsername', tempUsername.trim());
+      setShowUsernameSetup(false);
+    };
+
+    const sendMessage = async () => {
+      if (!newMessage.trim() || !username || sending) return;
+
+      // Rate limit: 1 message per 3 seconds
+      const now = Date.now();
+      if (now - lastSentAt < 3000) {
+        showError('Please wait a moment before sending another message.');
+        return;
+      }
+
+      // Moderate
+      const check = moderateMessage(newMessage.trim());
+      if (!check.ok) {
+        showError(check.reason);
+        return;
+      }
+
+      setSending(true);
+      setLastSentAt(now);
+
+      const session = supabase.getSession();
+      const optimisticMsg = {
+        id: `temp-${now}`,
+        username,
+        message: newMessage.trim(),
+        room: chatRoom,
+        created_at: new Date().toISOString(),
+        isOwn: true,
+        user_id: session?.user?.id
+      };
+
+      setMessages(prev => [...prev, optimisticMsg]);
+      setNewMessage('');
+
+      try {
+        const token = session ? session.access_token : SUPABASE_ANON_KEY;
+        const res = await fetch(`${SUPABASE_URL}/rest/v1/messages`, {
+          method: 'POST',
+          headers: {
+            'apikey': SUPABASE_ANON_KEY,
+            'Authorization': `Bearer ${token}`,
+            'Content-Type': 'application/json',
+            'Prefer': 'return=representation'
+          },
+          body: JSON.stringify({
+            user_id: session?.user?.id,
+            username,
+            message: newMessage.trim(),
+            room: chatRoom,
+            flagged: false
+          })
+        });
+
+        if (!res.ok) {
+          // Remove optimistic message on failure
+          setMessages(prev => prev.filter(m => m.id !== optimisticMsg.id));
+          showError('Failed to send message. Please try again.');
+        }
+      } catch (e) {
+        setMessages(prev => prev.filter(m => m.id !== optimisticMsg.id));
+        showError('Failed to send message.');
+      }
+
+      setSending(false);
+    };
+
+    const reportMessage = async (msg) => {
+      if (reportedIds.includes(msg.id)) return;
+
+      try {
+        const session = supabase.getSession();
+        const token = session ? session.access_token : SUPABASE_ANON_KEY;
+
+        // Flag the message in Supabase
+        await fetch(
+          `${SUPABASE_URL}/rest/v1/messages?id=eq.${msg.id}`,
+          {
+            method: 'PATCH',
+            headers: {
+              'apikey': SUPABASE_ANON_KEY,
+              'Authorization': `Bearer ${token}`,
+              'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({ flagged: true })
+          }
+        );
+
+        const updated = [...reportedIds, msg.id];
+        setReportedIds(updated);
+        localStorage.setItem('reportedMessageIds', JSON.stringify(updated));
+        setMessages(prev => prev.filter(m => m.id !== msg.id));
+        showSuccess('Message reported and removed.');
+      } catch (e) {
+        showError('Could not report message.');
+      }
+    };
+
+    const formatTime = (ts) => {
+      if (!ts) return '';
+      const d = new Date(ts);
+      const now = new Date();
+      const diffMins = Math.floor((now - d) / 60000);
+      if (diffMins < 1) return 'just now';
+      if (diffMins < 60) return `${diffMins}m ago`;
+      if (diffMins < 1440) return `${Math.floor(diffMins/60)}h ago`;
+      return d.toLocaleDateString('en-AU', { day: 'numeric', month: 'short' });
+    };
+
+    const session = supabase.getSession();
+    const currentUserId = session?.user?.id;
 
     return (
       <div className="flex flex-col h-screen bg-gray-50">
@@ -4079,32 +4213,27 @@ export default function BeatTheBet() {
 
         {/* Username Setup Modal */}
         {showUsernameSetup && (
-          <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-6 z-50">
+          <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-6 z-50" onClick={(e) => e.stopPropagation()}>
             <div className="bg-white rounded-xl shadow-2xl p-6 max-w-md w-full" onClick={(e) => e.stopPropagation()}>
-              <h2 className="text-xl font-bold text-gray-800 mb-4">Choose Your Username</h2>
+              <h2 className="text-xl font-bold text-gray-800 mb-2">Choose Your Username</h2>
               <p className="text-gray-600 text-sm mb-4">
-                Pick an anonymous username. No personal info. This keeps you safe.
+                Pick an anonymous username. No real name, no personal info.
               </p>
-              
               <input
                 type="text"
                 value={tempUsername}
                 onChange={(e) => setTempUsername(e.target.value)}
                 onKeyPress={(e) => e.key === 'Enter' && saveUsername()}
-                placeholder="e.g., CleanJourney, RecoveryPath"
+                placeholder="e.g., RecoveryPath, CleanJourney"
                 maxLength={20}
-                className="w-full p-3 border-2 border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-transparent mb-4"
+                className="w-full p-3 border-2 border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-transparent mb-3"
               />
-              
               <div className="bg-yellow-50 border-l-4 border-yellow-500 p-3 mb-4">
-                <p className="text-xs text-gray-700">
-                  <strong>Privacy first:</strong> Don't use your real name, location, or identifying details.
-                </p>
+                <p className="text-xs text-gray-700">Don't use your real name, location, or anything identifying.</p>
               </div>
-
               <button
                 onClick={saveUsername}
-                disabled={!tempUsername.trim()}
+                disabled={tempUsername.trim().length < 2}
                 className="w-full bg-indigo-500 hover:bg-indigo-600 disabled:bg-gray-300 text-white rounded-lg py-3 font-bold transition-colors"
               >
                 Start Chatting
@@ -4115,74 +4244,90 @@ export default function BeatTheBet() {
 
         {/* Room Selector */}
         <div className="bg-white border-b border-gray-200 px-4 py-3">
-          <div className="flex gap-2 overflow-x-auto">
+          <div className="flex gap-2 overflow-x-auto pb-1">
             {rooms.map(room => (
               <button
                 key={room.id}
                 onClick={() => setChatRoom(room.id)}
-                className={`flex items-center gap-2 px-4 py-2 rounded-lg font-semibold whitespace-nowrap transition-all ${
+                className={`flex items-center gap-1.5 px-3 py-2 rounded-lg font-semibold whitespace-nowrap transition-all text-sm ${
                   chatRoom === room.id
                     ? 'bg-indigo-500 text-white'
                     : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
                 }`}
               >
-                <span className="text-lg">{room.emoji}</span>
-                <span className="text-sm">{room.name}</span>
+                <span>{room.emoji}</span>
+                <span>{room.name}</span>
               </button>
             ))}
           </div>
-          
-          {/* Hint about unlocking more rooms */}
           {selectedInterests.length === 0 && (
-            <div className="mt-3 bg-blue-50 border border-blue-200 rounded-lg p-3">
+            <div className="mt-2 bg-blue-50 border border-blue-200 rounded-lg p-2">
               <p className="text-xs text-blue-800">
-                💡 <strong>Tip:</strong> Select your interests in <button 
-                  onClick={() => {
-                    setActiveTool('shop');
-                  }}
-                  className="underline font-semibold"
-                >Skill Builder</button> to unlock interest-based chat rooms!
+                Set your interests in Skill Builder to unlock more rooms.
               </p>
             </div>
           )}
         </div>
 
-        {/* Messages Area */}
+        {/* Room description */}
+        <div className="bg-indigo-50 border-b border-indigo-100 px-4 py-2">
+          <p className="text-xs text-indigo-700 font-medium">
+            {rooms.find(r => r.id === chatRoom)?.description}
+          </p>
+        </div>
+
+        {/* Messages */}
         <div className="flex-1 overflow-y-auto p-4 space-y-3">
           <div className="max-w-2xl mx-auto">
-            {/* Room Description */}
-            <div className="bg-indigo-50 border-l-4 border-indigo-500 rounded-lg p-4 mb-4">
-              <p className="text-sm text-gray-700">
-                <strong>{rooms.find(r => r.id === chatRoom)?.name}:</strong>{' '}
-                {rooms.find(r => r.id === chatRoom)?.description}
-              </p>
-            </div>
+            {loadingMessages && (
+              <div className="text-center py-8">
+                <div className="w-8 h-8 border-4 border-gray-200 border-t-indigo-500 rounded-full animate-spin mx-auto mb-2"></div>
+                <p className="text-sm text-gray-500">Loading messages...</p>
+              </div>
+            )}
 
-            {/* Messages */}
-            {displayMessages.map(msg => (
-              <div
-                key={msg.id}
-                className={`flex ${msg.isOwn ? 'justify-end' : 'justify-start'}`}
-              >
-                <div className={`max-w-[80%] ${msg.isOwn ? 'order-2' : 'order-1'}`}>
-                  <div className="flex items-baseline gap-2 mb-1">
-                    <span className={`text-xs font-semibold ${msg.isOwn ? 'text-indigo-600' : 'text-gray-600'}`}>
-                      {msg.username}
-                    </span>
-                    <span className="text-xs text-gray-400">{msg.timestamp}</span>
-                  </div>
-                  <div
-                    className={`rounded-2xl px-4 py-2 ${
-                      msg.isOwn
-                        ? 'bg-indigo-500 text-white rounded-br-none'
-                        : 'bg-white border border-gray-200 text-gray-800 rounded-bl-none'
-                    }`}
-                  >
-                    <p className="text-sm leading-relaxed">{msg.message}</p>
+            {!loadingMessages && messages.length === 0 && (
+              <div className="text-center py-12">
+                <p className="text-gray-500 font-semibold mb-1">No messages yet</p>
+                <p className="text-sm text-gray-400">Be the first to say something.</p>
+              </div>
+            )}
+
+            {messages.map(msg => {
+              const isOwn = msg.user_id === currentUserId || msg.isOwn;
+              return (
+                <div key={msg.id} className={`flex ${isOwn ? 'justify-end' : 'justify-start'} group`}>
+                  <div className={`max-w-[80%]`}>
+                    <div className={`flex items-baseline gap-2 mb-1 ${isOwn ? 'justify-end' : 'justify-start'}`}>
+                      <span className={`text-xs font-semibold ${isOwn ? 'text-indigo-600' : 'text-gray-600'}`}>
+                        {isOwn ? 'You' : msg.username}
+                      </span>
+                      <span className="text-xs text-gray-400">{formatTime(msg.created_at)}</span>
+                    </div>
+                    <div className="flex items-end gap-1">
+                      <div
+                        className={`rounded-2xl px-4 py-2.5 ${
+                          isOwn
+                            ? 'bg-indigo-500 text-white rounded-br-none'
+                            : 'bg-white border border-gray-200 text-gray-800 rounded-bl-none shadow-sm'
+                        }`}
+                      >
+                        <p className="text-sm leading-relaxed">{msg.message}</p>
+                      </div>
+                      {!isOwn && (
+                        <button
+                          onClick={() => reportMessage(msg)}
+                          className="opacity-0 group-hover:opacity-100 text-gray-300 hover:text-red-400 transition-all text-xs px-1"
+                          title="Report message"
+                        >
+                          ⚑
+                        </button>
+                      )}
+                    </div>
                   </div>
                 </div>
-              </div>
-            ))}
+              );
+            })}
             <div ref={messagesEndRef} />
           </div>
         </div>
@@ -4195,41 +4340,36 @@ export default function BeatTheBet() {
                 type="text"
                 value={newMessage}
                 onChange={(e) => setNewMessage(e.target.value)}
-                onKeyPress={(e) => e.key === 'Enter' && sendMessage()}
-                placeholder={username ? "Type your message..." : "Set username first..."}
-                disabled={!username}
-                className="flex-1 p-3 border-2 border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-transparent disabled:bg-gray-100"
+                onKeyPress={(e) => e.key === 'Enter' && !e.shiftKey && sendMessage()}
+                placeholder={username ? "Type a message..." : "Set a username first..."}
+                disabled={!username || sending}
+                maxLength={500}
+                className="flex-1 p-3 border-2 border-gray-300 rounded-xl focus:ring-2 focus:ring-indigo-500 focus:border-transparent disabled:bg-gray-100 text-sm"
               />
               <button
                 onClick={sendMessage}
-                disabled={!newMessage.trim() || !username}
-                className="bg-indigo-500 hover:bg-indigo-600 disabled:bg-gray-300 text-white rounded-lg px-6 py-3 font-bold transition-colors"
+                disabled={!newMessage.trim() || !username || sending}
+                className="bg-indigo-500 hover:bg-indigo-600 disabled:bg-gray-300 text-white rounded-xl px-5 py-3 font-bold transition-colors"
               >
-                Send
+                {sending ? '...' : 'Send'}
               </button>
             </div>
-            
             {username && (
-              <div className="mt-2 flex items-center justify-between text-xs text-gray-500">
-                <span>Chatting as <strong>{username}</strong></span>
-                <button
-                  onClick={() => setShowUsernameSetup(true)}
-                  className="text-indigo-600 hover:text-indigo-700"
-                >
-                  Change username
+              <div className="mt-2 flex items-center justify-between text-xs text-gray-400">
+                <span>Chatting as <strong className="text-gray-600">{username}</strong></span>
+                <button onClick={() => setShowUsernameSetup(true)} className="text-indigo-500 hover:text-indigo-600">
+                  Change
                 </button>
               </div>
             )}
           </div>
         </div>
 
-        {/* Community Guidelines Footer */}
-        <div className="bg-yellow-50 border-t-2 border-yellow-500 p-3">
-          <div className="max-w-2xl mx-auto">
-            <p className="text-xs text-gray-700 text-center">
-              Be kind. Be supportive. Don't share personal info. Report anything harmful.
-            </p>
-          </div>
+        {/* Guidelines */}
+        <div className="bg-gray-50 border-t border-gray-200 px-4 py-2">
+          <p className="text-xs text-gray-400 text-center">
+            Be kind and supportive. No gambling sites, links, or personal info. Hover a message to report it.
+          </p>
         </div>
       </div>
     );
@@ -5168,9 +5308,55 @@ export default function BeatTheBet() {
                     type="file"
                     accept="image/*"
                     className="hidden"
-                    onChange={(e) => {
+                    onChange={async (e) => {
                       const file = e.target.files[0];
                       if (!file) return;
+
+                      // Try Supabase Storage first, fall back to base64
+                      const session = supabase.getSession();
+                      if (session) {
+                        try {
+                          showSuccess('Uploading photo...');
+                          const uid = session.user.id;
+                          const path = `${uid}/${Date.now()}_${file.name.replace(/[^a-zA-Z0-9._-]/g, '_')}`;
+                          const { data, error } = await supabase.storage
+                            .from('why-quitting-photos')
+                            .upload(path, file);
+
+                          if (!error) {
+                            const { data: urlData } = await supabase.storage
+                              .from('why-quitting-photos')
+                              .createSignedUrl(path, 60 * 60 * 24 * 365); // 1 year
+
+                            const newReason = {
+                              id: Date.now(),
+                              type: 'photo',
+                              content: urlData.signedUrl,
+                              storagePath: path,
+                              filename: file.name,
+                              timestamp: new Date().toISOString()
+                            };
+                            const updated = { ...whyImQuitting, reasons: [...whyImQuitting.reasons, newReason] };
+                            setWhyImQuitting(updated);
+                            localStorage.setItem('whyImQuitting', JSON.stringify(updated));
+
+                            // Also save to Supabase
+                            await supabase.from('why_quitting').upsert({
+                              user_id: uid,
+                              primary_reason: whyImQuitting.primaryReason,
+                              reasons: updated.reasons.map(r => ({...r, content: r.storagePath || r.content})),
+                              updated_at: new Date().toISOString()
+                            });
+
+                            showSuccess('Photo added!');
+                            return;
+                          }
+                        } catch (err) {
+                          console.warn('Storage upload failed, falling back to base64:', err);
+                        }
+                      }
+
+                      // Fallback: base64 in localStorage
                       const reader = new FileReader();
                       reader.onload = (ev) => {
                         const newReason = {
@@ -5183,7 +5369,7 @@ export default function BeatTheBet() {
                         const updated = { ...whyImQuitting, reasons: [...whyImQuitting.reasons, newReason] };
                         setWhyImQuitting(updated);
                         localStorage.setItem('whyImQuitting', JSON.stringify(updated));
-                        showSuccess('Photo added! 📷');
+                        showSuccess('Photo added!');
                       };
                       reader.readAsDataURL(file);
                     }}
