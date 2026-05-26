@@ -297,6 +297,19 @@ const supabase = (() => {
  */
 
 export default function BeatTheBet() {
+  // Admin access - emails that have admin panel access
+  const [adminEmails, setAdminEmails] = React.useState(() => {
+    const saved = localStorage.getItem('adminEmails');
+    // Default: add your email here
+    return saved ? JSON.parse(saved) : ['beatthebetadmin@gmail.com'];
+  });
+
+  const isAdmin = () => {
+    const session = supabase.getSession();
+    if (!session) return false;
+    return adminEmails.map(e => e.toLowerCase()).includes(session.user.email.toLowerCase());
+  };
+
   // Authentication State
   // Restore session from Supabase on load
   const [isAuthenticated, setIsAuthenticated] = useState(() => {
@@ -1414,7 +1427,7 @@ export default function BeatTheBet() {
           </button>
 
           <button
-            onClick={() => window.open('https://gaaustralia.org.au/meetings/?tsml-day=any&tsml-distance=&tsml-mode=me&tsml-view=map', '_blank')}
+            onClick={() => window.open(`https://gaaustralia.org.au/meetings/?tsml-query=${encodeURIComponent(userCity || '')}&tsml-view=map`, '_blank')}
             className="w-full bg-green-500 hover:bg-green-600 text-white rounded-lg p-4 flex items-center transition-colors"
           >
             <MapPin className="w-5 h-5 mr-3" />
@@ -1659,6 +1672,8 @@ export default function BeatTheBet() {
     if (activeTool === 'music-discovery') return <MusicDiscoveryPage />;
     if (activeTool === 'why-quitting') return <WhyImQuittingPage />;
     if (activeTool === 'settings') return <SettingsPage />;
+    if (activeTool === 'admin') return isAdmin() ? <AdminPanel /> : null;
+    if (activeTool === 'admin') return isAdmin() ? <AdminPanel /> : null;
     if (activeTool === 'nearby') return <NearbyPage />;
 
     // Otherwise show the tools list
@@ -2129,7 +2144,7 @@ export default function BeatTheBet() {
             </p>
             
             <button
-              onClick={() => window.open('https://gaaustralia.org.au/meetings/?tsml-day=any&tsml-distance=&tsml-mode=me&tsml-view=map', '_blank')}
+              onClick={() => window.open(`https://gaaustralia.org.au/meetings/?tsml-query=${encodeURIComponent(userCity || '')}&tsml-view=map`, '_blank')}
               className="w-full bg-green-500 hover:bg-green-600 text-white rounded-lg p-4 font-bold transition-colors mb-4"
             >
               Search Meetings Near You →
@@ -5038,7 +5053,7 @@ export default function BeatTheBet() {
                 />
               </div>
               <a
-                href="https://www.gamblersanonymous.org.au/find-a-meeting"
+                href={`https://gaaustralia.org.au/meetings/?tsml-query=${encodeURIComponent(userCity || '')}&tsml-view=map`}
                 target="_blank"
                 rel="noopener noreferrer"
                 className="block w-full bg-green-500 hover:bg-green-600 text-white rounded-xl py-4 font-bold text-lg text-center transition-colors mb-4"
@@ -6573,40 +6588,119 @@ export default function BeatTheBet() {
     // Main Profile View
     return (
       <div className="flex flex-col min-h-screen bg-gray-50 pb-20">
-        <div className="bg-gradient-to-br from-purple-500 to-blue-500 text-white p-6">
-          <h1 className="text-2xl font-bold mb-2">My Profile</h1>
-          <div className="flex items-center gap-3">
-            <div className={`${getLevelTier(level).bg} ${getLevelTier(level).color} px-4 py-2 rounded-full font-bold flex items-center gap-2`}>
-              <span className="text-xl">{getLevelTier(level).icon}</span>
-              <span>Level {level}</span>
+
+        {/* Header */}
+        <div className="bg-gradient-to-br from-purple-600 to-blue-600 text-white p-6 pb-8">
+          <div className="flex items-center justify-between mb-4">
+            <h1 className="text-2xl font-bold">My Profile</h1>
+            {isAdmin() && (
+              <button
+                onClick={() => { setActiveTab('resources'); setActiveTool('admin'); }}
+                className="bg-white bg-opacity-20 hover:bg-opacity-30 px-3 py-1.5 rounded-lg text-xs font-bold transition-colors"
+              >
+                Admin Panel
+              </button>
+            )}
+          </div>
+
+          {/* User info */}
+          <div className="flex items-center gap-4">
+            <div className="w-16 h-16 bg-white bg-opacity-20 rounded-full flex items-center justify-center text-3xl font-bold">
+              {(username || '?')[0].toUpperCase()}
             </div>
-            <div className="bg-white bg-opacity-20 px-4 py-2 rounded-full font-bold">
-              {points} points
+            <div>
+              <p className="text-xl font-bold">{username || 'Anonymous'}</p>
+              <p className="text-sm opacity-75">{currentUser?.email}</p>
+              <div className="flex items-center gap-2 mt-1">
+                <span className={`${getLevelTier(level).bg} ${getLevelTier(level).color} px-2 py-0.5 rounded-full text-xs font-bold`}>
+                  {getLevelTier(level).icon} Level {level}
+                </span>
+                <span className="bg-white bg-opacity-20 px-2 py-0.5 rounded-full text-xs font-bold">
+                  {points} pts
+                </span>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        {/* Quick stats strip */}
+        <div className="bg-white border-b border-gray-200 px-6 py-4">
+          <div className="grid grid-cols-3 gap-4 text-center">
+            <div>
+              <p className="text-2xl font-bold text-blue-600">{getDaysClean()}</p>
+              <p className="text-xs text-gray-500">Days clean</p>
+            </div>
+            <div>
+              <p className="text-2xl font-bold text-purple-600">{journalEntries.length}</p>
+              <p className="text-xs text-gray-500">Journal entries</p>
+            </div>
+            <div>
+              <p className="text-2xl font-bold text-yellow-600">{earnedBadges.length}</p>
+              <p className="text-xs text-gray-500">Badges</p>
             </div>
           </div>
         </div>
 
         <div className="flex-1 p-6 overflow-y-auto">
-          <div className="max-w-md mx-auto space-y-4">
+          <div className="max-w-md mx-auto space-y-5">
+
+            {/* Recovery timer card */}
+            <div className="bg-white rounded-xl shadow-md p-5">
+              <h3 className="font-bold text-gray-800 mb-3">Recovery Timer</h3>
+              <div className="flex items-center justify-between">
+                <div>
+                  <p className="text-3xl font-bold text-blue-600">{getDaysClean()} days</p>
+                  <p className="text-sm text-gray-500">
+                    Since {new Date(startDate).toLocaleDateString('en-AU', { day: 'numeric', month: 'long', year: 'numeric' })}
+                  </p>
+                </div>
+                <button
+                  onClick={() => setShowResetModal(true)}
+                  className="text-xs text-gray-400 hover:text-gray-600 border border-gray-200 rounded-lg px-3 py-2"
+                >
+                  Reset
+                </button>
+              </div>
+            </div>
+
             {/* Badges */}
-            <div className="bg-white rounded-xl shadow-md p-6">
-              <h3 className="font-bold text-gray-800 mb-4">My Badges ({earnedBadges.length})</h3>
-              <div className="grid grid-cols-3 gap-3">
+            <div className="bg-white rounded-xl shadow-md p-5">
+              <div className="flex items-center justify-between mb-4">
+                <h3 className="font-bold text-gray-800">Badges</h3>
+                <span className="text-sm text-gray-500">{earnedBadges.length}/{allBadges.length} earned</span>
+              </div>
+              <div className="grid grid-cols-4 gap-3">
                 {allBadges.map((badge) => {
                   const earned = earnedBadges.includes(badge.id);
                   return (
                     <div
                       key={badge.id}
-                      className={`p-3 rounded-xl text-center transition-all ${
-                        earned ? 'bg-yellow-100' : 'bg-gray-100 opacity-50'
-                      }`}
+                      className={`rounded-xl p-3 text-center ${earned ? 'bg-yellow-50 border-2 border-yellow-200' : 'bg-gray-50 opacity-40'}`}
+                      title={badge.description}
                     >
-                      <div className="text-3xl mb-1">{earned ? badge.icon : '—'}</div>
-                      <div className="text-xs font-semibold text-gray-700">{badge.name}</div>
+                      <div className="text-2xl mb-1">{earned ? badge.icon : '—'}</div>
+                      <div className="text-xs font-semibold text-gray-700 leading-tight">{badge.name}</div>
                     </div>
                   );
                 })}
               </div>
+              {/* Next badge hint */}
+              {(() => {
+                const daysClean = getDaysClean();
+                const next = allBadges.find(b => !earnedBadges.includes(b.id) && typeof b.requirement === 'number');
+                if (!next) return null;
+                const isJournal = next.id.startsWith('journal_');
+                const current = isJournal ? journalEntries.length : daysClean;
+                const remaining = next.requirement - current;
+                if (remaining <= 0) return null;
+                return (
+                  <div className="mt-3 bg-blue-50 rounded-lg p-3">
+                    <p className="text-xs text-blue-700">
+                      <strong>{next.name}</strong> — {remaining} more {isJournal ? 'journal entries' : 'days'} to go
+                    </p>
+                  </div>
+                );
+              })()}
             </div>
 
             {/* My Interests */}
@@ -6614,37 +6708,55 @@ export default function BeatTheBet() {
               onClick={() => setShowInterests(true)}
               className="w-full bg-white rounded-xl shadow-md p-5 hover:shadow-lg transition-all text-left"
             >
-              <div className="flex items-start justify-between">
+              <div className="flex items-center justify-between">
                 <div>
                   <h3 className="font-bold text-gray-800 mb-1">My Interests</h3>
-                  <p className="text-sm text-gray-600">
-                    {selectedInterests.length === 0 
-                      ? "Set your interests"
-                      : `${selectedInterests.length} selected`}
+                  <p className="text-sm text-gray-500">
+                    {selectedInterests.length === 0
+                      ? 'None selected — tap to add'
+                      : selectedInterests.length + ' selected'}
                   </p>
                 </div>
-                <ChevronRight className="w-6 h-6 text-gray-400" />
+                <ChevronRight className="w-5 h-5 text-gray-400" />
               </div>
             </button>
 
-            {/* Stats */}
-            <div className="bg-white rounded-xl shadow-md p-6">
-              <h3 className="font-bold text-gray-800 mb-4">Stats</h3>
-              <div className="space-y-3">
-                <div className="flex justify-between">
-                  <span className="text-gray-600">Days Clean</span>
-                  <span className="font-bold text-blue-600">{getDaysClean()}</span>
+            {/* Why I'm Quitting preview */}
+            <button
+              onClick={() => { setActiveTab('resources'); setActiveTool('why-quitting'); }}
+              className="w-full bg-white rounded-xl shadow-md p-5 hover:shadow-lg transition-all text-left"
+            >
+              <div className="flex items-center justify-between">
+                <div>
+                  <h3 className="font-bold text-gray-800 mb-1">Why I'm Quitting</h3>
+                  <p className="text-sm text-gray-500">
+                    {whyImQuitting.primaryReason
+                      ? `"${whyImQuitting.primaryReason.slice(0, 50)}${whyImQuitting.primaryReason.length > 50 ? '...' : ''}"`
+                      : 'Add your reasons — tap to open'}
+                  </p>
                 </div>
-                <div className="flex justify-between">
-                  <span className="text-gray-600">Journal Entries</span>
-                  <span className="font-bold text-purple-600">{journalEntries.length}</span>
-                </div>
-                <div className="flex justify-between">
-                  <span className="text-gray-600">Badges Earned</span>
-                  <span className="font-bold text-yellow-600">{earnedBadges.length}/{allBadges.length}</span>
-                </div>
+                <ChevronRight className="w-5 h-5 text-gray-400" />
               </div>
+            </button>
+
+            {/* Settings & Logout */}
+            <div className="bg-white rounded-xl shadow-md overflow-hidden">
+              <button
+                onClick={() => { setActiveTab('resources'); setActiveTool('settings'); }}
+                className="w-full flex items-center justify-between p-5 hover:bg-gray-50 transition-colors border-b border-gray-100"
+              >
+                <span className="font-semibold text-gray-800">Settings</span>
+                <ChevronRight className="w-5 h-5 text-gray-400" />
+              </button>
+              <button
+                onClick={logout}
+                className="w-full flex items-center justify-between p-5 hover:bg-red-50 transition-colors"
+              >
+                <span className="font-semibold text-red-600">Log Out</span>
+                <ChevronRight className="w-5 h-5 text-red-300" />
+              </button>
             </div>
+
           </div>
         </div>
       </div>
@@ -6921,34 +7033,7 @@ Keep going! Every day counts. 💪
                   )}
                 </div>
 
-                {/* Age Range */}
-                <div>
-                  <label className="block text-sm font-semibold text-gray-700 mb-2">Age Range</label>
-                  <select
-                    value={tempAge}
-                    onChange={(e) => saveAge(e.target.value)}
-                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
-                  >
-                    <option value="18-25">18-25</option>
-                    <option value="26-35">26-35</option>
-                    <option value="36-45">36-45</option>
-                    <option value="46-55">46-55</option>
-                    <option value="56+">56+</option>
-                  </select>
-                </div>
 
-                {/* City */}
-                <div>
-                  <label className="block text-sm font-semibold text-gray-700 mb-2">City</label>
-                  <input
-                    type="text"
-                    value={tempCity}
-                    onChange={(e) => setTempCity(e.target.value)}
-                    onBlur={(e) => saveCity(e.target.value)}
-                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
-                    placeholder="Your city"
-                  />
-                </div>
               </div>
             </div>
 
@@ -8131,6 +8216,278 @@ Keep going! Every day counts. 💪
     );
   };
 
+
+
+  // ============================================================
+  // Admin Panel Component
+  // ============================================================
+  const AdminPanel = () => {
+    const [flaggedMessages, setFlaggedMessages] = React.useState([]);
+    const [userStats, setUserStats] = React.useState(null);
+    const [loading, setLoading] = React.useState(true);
+    const [newAdminEmail, setNewAdminEmail] = React.useState('');
+    const [activeAdminTab, setActiveAdminTab] = React.useState('messages');
+
+    React.useEffect(() => {
+      loadAdminData();
+    }, []);
+
+    const loadAdminData = async () => {
+      setLoading(true);
+      const session = supabase.getSession();
+      if (!session) return;
+      const token = session.access_token;
+
+      try {
+        // Load flagged messages
+        const msgRes = await fetch(
+          `${SUPABASE_URL}/rest/v1/messages?flagged=eq.true&order=created_at.desc&limit=100`,
+          { headers: { 'apikey': SUPABASE_ANON_KEY, 'Authorization': `Bearer ${token}` } }
+        );
+        if (msgRes.ok) setFlaggedMessages(await msgRes.json());
+
+        // Load user stats
+        const userRes = await fetch(
+          `${SUPABASE_URL}/rest/v1/profiles?select=id,username,created_at,points,level`,
+          { headers: { 'apikey': SUPABASE_ANON_KEY, 'Authorization': `Bearer ${token}` } }
+        );
+        if (userRes.ok) {
+          const users = await userRes.json();
+          setUserStats({
+            total: users.length,
+            users: users.sort((a, b) => new Date(b.created_at) - new Date(a.created_at))
+          });
+        }
+      } catch (e) {
+        console.error('Admin load error:', e);
+      }
+      setLoading(false);
+    };
+
+    const approveMessage = async (msg) => {
+      const session = supabase.getSession();
+      const token = session.access_token;
+      await fetch(`${SUPABASE_URL}/rest/v1/messages?id=eq.${msg.id}`, {
+        method: 'PATCH',
+        headers: {
+          'apikey': SUPABASE_ANON_KEY,
+          'Authorization': `Bearer ${token}`,
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({ flagged: false })
+      });
+      setFlaggedMessages(prev => prev.filter(m => m.id !== msg.id));
+      showSuccess('Message restored.');
+    };
+
+    const deleteMessage = async (msg) => {
+      const session = supabase.getSession();
+      const token = session.access_token;
+      await fetch(`${SUPABASE_URL}/rest/v1/messages?id=eq.${msg.id}`, {
+        method: 'DELETE',
+        headers: { 'apikey': SUPABASE_ANON_KEY, 'Authorization': `Bearer ${token}` }
+      });
+      setFlaggedMessages(prev => prev.filter(m => m.id !== msg.id));
+      showSuccess('Message deleted.');
+    };
+
+    const addAdminEmail = () => {
+      if (!newAdminEmail.trim() || !validators.email(newAdminEmail.trim())) {
+        showError('Please enter a valid email address.');
+        return;
+      }
+      const updated = [...adminEmails, newAdminEmail.trim().toLowerCase()];
+      setAdminEmails(updated);
+      localStorage.setItem('adminEmails', JSON.stringify(updated));
+      setNewAdminEmail('');
+      showSuccess(`${newAdminEmail.trim()} added as admin.`);
+    };
+
+    const removeAdminEmail = (email) => {
+      const session = supabase.getSession();
+      if (session && session.user.email.toLowerCase() === email.toLowerCase()) {
+        showError("You can't remove yourself as admin.");
+        return;
+      }
+      const updated = adminEmails.filter(e => e.toLowerCase() !== email.toLowerCase());
+      setAdminEmails(updated);
+      localStorage.setItem('adminEmails', JSON.stringify(updated));
+    };
+
+    const formatDate = (ts) => new Date(ts).toLocaleDateString('en-AU', {
+      day: 'numeric', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit'
+    });
+
+    return (
+      <div className="flex flex-col min-h-screen bg-gray-50 pb-20">
+        <div className="bg-gray-900 text-white p-6">
+          <button onClick={() => setActiveTool(null)} className="flex items-center mb-4 hover:opacity-80">
+            <ArrowLeft className="w-5 h-5 mr-2" />
+            <span>Back</span>
+          </button>
+          <h1 className="text-2xl font-bold">Admin Panel</h1>
+          <p className="text-sm opacity-70">Beat the Bet — moderation & management</p>
+        </div>
+
+        {/* Tabs */}
+        <div className="bg-white border-b border-gray-200 px-4 py-3">
+          <div className="flex gap-2">
+            {[
+              { id: 'messages', label: `Flagged (${flaggedMessages.length})` },
+              { id: 'users', label: `Users (${userStats?.total || 0})` },
+              { id: 'admins', label: 'Admins' },
+            ].map(tab => (
+              <button
+                key={tab.id}
+                onClick={() => setActiveAdminTab(tab.id)}
+                className={`px-4 py-2 rounded-lg font-semibold text-sm transition-colors ${
+                  activeAdminTab === tab.id ? 'bg-gray-900 text-white' : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
+                }`}
+              >
+                {tab.label}
+              </button>
+            ))}
+            <button
+              onClick={loadAdminData}
+              className="ml-auto px-3 py-2 rounded-lg text-sm bg-blue-100 text-blue-700 hover:bg-blue-200 font-semibold"
+            >
+              Refresh
+            </button>
+          </div>
+        </div>
+
+        <div className="flex-1 p-6 overflow-y-auto">
+          <div className="max-w-2xl mx-auto">
+
+            {loading && (
+              <div className="text-center py-12">
+                <div className="w-8 h-8 border-4 border-gray-200 border-t-gray-800 rounded-full animate-spin mx-auto mb-3"></div>
+                <p className="text-gray-500">Loading...</p>
+              </div>
+            )}
+
+            {/* Flagged Messages */}
+            {!loading && activeAdminTab === 'messages' && (
+              <div className="space-y-4">
+                <p className="text-sm text-gray-500">
+                  {flaggedMessages.length === 0
+                    ? 'No flagged messages. All clear.'
+                    : `${flaggedMessages.length} message${flaggedMessages.length !== 1 ? 's' : ''} awaiting review.`}
+                </p>
+                {flaggedMessages.map(msg => (
+                  <div key={msg.id} className="bg-white rounded-xl shadow-md p-5 border-l-4 border-red-400">
+                    <div className="flex items-start justify-between mb-3">
+                      <div>
+                        <p className="font-semibold text-gray-800">{msg.username}</p>
+                        <p className="text-xs text-gray-400">{formatDate(msg.created_at)} · #{msg.room}</p>
+                      </div>
+                    </div>
+                    <p className="text-gray-700 bg-gray-50 rounded-lg p-3 mb-4 text-sm">{msg.message}</p>
+                    <div className="flex gap-2">
+                      <button
+                        onClick={() => approveMessage(msg)}
+                        className="flex-1 bg-green-500 hover:bg-green-600 text-white rounded-lg py-2 font-semibold text-sm"
+                      >
+                        Restore
+                      </button>
+                      <button
+                        onClick={() => deleteMessage(msg)}
+                        className="flex-1 bg-red-500 hover:bg-red-600 text-white rounded-lg py-2 font-semibold text-sm"
+                      >
+                        Delete
+                      </button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            {/* Users */}
+            {!loading && activeAdminTab === 'users' && userStats && (
+              <div className="space-y-3">
+                <div className="grid grid-cols-2 gap-4 mb-4">
+                  <div className="bg-white rounded-xl shadow-md p-5 text-center">
+                    <p className="text-3xl font-bold text-gray-800">{userStats.total}</p>
+                    <p className="text-sm text-gray-500">Total users</p>
+                  </div>
+                  <div className="bg-white rounded-xl shadow-md p-5 text-center">
+                    <p className="text-3xl font-bold text-blue-600">
+                      {userStats.users.filter(u => {
+                        const d = new Date(u.created_at);
+                        const now = new Date();
+                        return (now - d) < 7 * 24 * 60 * 60 * 1000;
+                      }).length}
+                    </p>
+                    <p className="text-sm text-gray-500">New this week</p>
+                  </div>
+                </div>
+                <h3 className="font-bold text-gray-800">Recent signups</h3>
+                {userStats.users.slice(0, 20).map(user => (
+                  <div key={user.id} className="bg-white rounded-xl shadow-sm p-4 flex items-center justify-between">
+                    <div>
+                      <p className="font-semibold text-gray-800">{user.username || 'No username'}</p>
+                      <p className="text-xs text-gray-400">{formatDate(user.created_at)}</p>
+                    </div>
+                    <div className="text-right">
+                      <p className="text-sm font-semibold text-purple-600">Lvl {user.level}</p>
+                      <p className="text-xs text-gray-400">{user.points} pts</p>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            {/* Admins */}
+            {!loading && activeAdminTab === 'admins' && (
+              <div className="space-y-4">
+                <div className="bg-white rounded-xl shadow-md p-5">
+                  <h3 className="font-bold text-gray-800 mb-4">Admin Accounts</h3>
+                  <div className="space-y-2 mb-4">
+                    {adminEmails.map(email => (
+                      <div key={email} className="flex items-center justify-between p-3 bg-gray-50 rounded-lg">
+                        <span className="text-sm font-medium text-gray-800">{email}</span>
+                        <button
+                          onClick={() => removeAdminEmail(email)}
+                          className="text-red-400 hover:text-red-600 text-sm font-semibold"
+                        >
+                          Remove
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                  <div className="border-t border-gray-200 pt-4">
+                    <p className="text-sm font-semibold text-gray-700 mb-2">Add admin email</p>
+                    <div className="flex gap-2">
+                      <input
+                        type="email"
+                        value={newAdminEmail}
+                        onChange={(e) => setNewAdminEmail(e.target.value)}
+                        onKeyPress={(e) => e.key === 'Enter' && addAdminEmail()}
+                        placeholder="email@example.com"
+                        className="flex-1 p-2.5 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-gray-800 focus:border-transparent"
+                      />
+                      <button
+                        onClick={addAdminEmail}
+                        className="bg-gray-900 hover:bg-gray-700 text-white px-4 rounded-lg font-semibold text-sm"
+                      >
+                        Add
+                      </button>
+                    </div>
+                  </div>
+                </div>
+                <div className="bg-yellow-50 border-l-4 border-yellow-500 rounded-lg p-4">
+                  <p className="text-sm text-gray-700">
+                    Admin access is stored locally on this device. To give someone else admin access, add their email here on your device — they will see the admin button when logged in with that email.
+                  </p>
+                </div>
+              </div>
+            )}
+
+          </div>
+        </div>
+      </div>
+    );
+  };
 
   // Show auth screens if not authenticated
   if (!isAuthenticated) {
