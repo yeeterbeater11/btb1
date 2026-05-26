@@ -7532,35 +7532,36 @@ Keep going! Every day counts. 💪
     const [password, setPassword] = useState('');
     const [loading, setLoading] = useState(false);
     const [errors, setErrors] = useState({});
+    const [loginError, setLoginError] = useState('');
 
     const handleLogin = async () => {
       setErrors({});
-      
+      setLoginError('');
+
       const validationErrors = validateForm({
         email: { value: email, rules: ['required', 'email'] },
         password: { value: password, rules: ['required'] }
       });
-      
+
       if (Object.keys(validationErrors).length > 0) {
         setErrors(validationErrors);
-        showError(Object.values(validationErrors)[0]);
         return;
       }
-      
+
       setLoading(true);
       try {
         await realLogin(email, password);
         showSuccess('Welcome back!');
       } catch (error) {
-        showError(error.message);
+        // Show inline error - keep email in box, clear password only
+        setPassword('');
+        setLoginError(error.message || 'Incorrect email or password. Please try again.');
       } finally {
         setLoading(false);
       }
     };
 
-    if (loading) {
-      return <LoadingScreen message="Logging in..." />;
-    }
+    // No full-screen loading swap - keeps email visible if login fails
 
     return (
       <div className="min-h-screen bg-gray-50 flex flex-col p-6">
@@ -7627,12 +7628,25 @@ Keep going! Every day counts. 💪
                 </button>
               </div>
 
+              {/* Inline error message */}
+              {loginError && (
+                <div className="bg-red-50 border border-red-300 rounded-xl p-4 flex items-start gap-3">
+                  <span className="text-red-500 mt-0.5 flex-shrink-0">✕</span>
+                  <p className="text-sm text-red-700 font-medium">{loginError}</p>
+                </div>
+              )}
+
               <button
                 onClick={handleLogin}
                 disabled={loading}
-                className="w-full bg-blue-600 hover:bg-blue-700 disabled:bg-gray-300 text-white py-4 rounded-xl font-bold text-lg transition-colors shadow-lg"
+                className="w-full bg-blue-600 hover:bg-blue-700 disabled:bg-blue-400 text-white py-4 rounded-xl font-bold text-lg transition-colors shadow-lg flex items-center justify-center gap-2"
               >
-                Log In
+                {loading ? (
+                  <>
+                    <div className="w-5 h-5 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                    Logging in...
+                  </>
+                ) : 'Log In'}
               </button>
 
               <div className="text-center">
@@ -7673,38 +7687,38 @@ Keep going! Every day counts. 💪
 
     const passwordChecks = getPasswordStrength();
 
+    const [signupError, setSignupError] = React.useState('');
+
     const handleSignUp = async () => {
       setErrors({});
-      
+      setSignupError('');
+
       const validationErrors = validateForm({
         email: { value: email, rules: ['required', 'email'] },
         password: { value: password, rules: ['required', 'password'] }
       });
-      
+
       if (password !== confirmPassword) {
         validationErrors.confirmPassword = 'Passwords do not match';
       }
-      
+
       if (Object.keys(validationErrors).length > 0) {
         setErrors(validationErrors);
-        showError(Object.values(validationErrors)[0]);
         return;
       }
-      
+
       setLoading(true);
       try {
         await realSignup(email, password, confirmPassword);
         showSuccess('Account created successfully!');
       } catch (error) {
-        showError(error.message);
+        setSignupError(error.message || 'Could not create account. Please try again.');
       } finally {
         setLoading(false);
       }
     };
 
-    if (loading) {
-      return <LoadingScreen message="Creating your account..." />;
-    }
+    // No full-screen loading swap
 
     return (
       <div className="min-h-screen bg-gray-50 flex flex-col p-6">
@@ -7796,12 +7810,24 @@ Keep going! Every day counts. 💪
                 )}
               </div>
 
+              {signupError && (
+                <div className="bg-red-50 border border-red-300 rounded-xl p-4 flex items-start gap-3">
+                  <span className="text-red-500 mt-0.5 flex-shrink-0">✕</span>
+                  <p className="text-sm text-red-700 font-medium">{signupError}</p>
+                </div>
+              )}
+
               <button
                 onClick={handleSignUp}
                 disabled={loading}
-                className="w-full bg-blue-600 hover:bg-blue-700 disabled:bg-gray-300 text-white py-4 rounded-xl font-bold text-lg transition-colors shadow-lg"
+                className="w-full bg-blue-600 hover:bg-blue-700 disabled:bg-blue-400 text-white py-4 rounded-xl font-bold text-lg transition-colors shadow-lg flex items-center justify-center gap-2"
               >
-                Create Account
+                {loading ? (
+                  <>
+                    <div className="w-5 h-5 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                    Creating account...
+                  </>
+                ) : 'Create Account'}
               </button>
 
               <div className="text-center">
