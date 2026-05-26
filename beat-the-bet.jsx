@@ -834,6 +834,85 @@ export default function BeatTheBet() {
     setIsAuthenticated(true);
     localStorage.setItem('isAuthenticated', 'true');
     localStorage.setItem('currentUser', JSON.stringify(user));
+
+    // Restore all user data from Supabase in background
+    const uid = data.user.id;
+    const token = data.access_token;
+    const headers = { 'apikey': SUPABASE_ANON_KEY, 'Authorization': `Bearer ${token}` };
+
+    // Restore data in parallel - don't await, let it load in background
+    Promise.allSettled([
+
+      // Journal entries
+      fetch(`${SUPABASE_URL}/rest/v1/journal_entries?user_id=eq.${uid}&order=created_at.asc&limit=500`, { headers })
+        .then(r => r.json()).then(entries => {
+          if (Array.isArray(entries) && entries.length > 0) {
+            const mapped = entries.map(e => ({
+              id: e.id,
+              date: e.created_at,
+              timestamp: new Date(e.created_at).toLocaleString(),
+              mode: e.mode,
+              mood: e.mood,
+              content: e.content,
+              responses: e.responses
+            }));
+            setJournalEntries(mapped);
+            localStorage.setItem('journalEntries', JSON.stringify(mapped));
+          }
+        }).catch(() => {}),
+
+      // Why I'm quitting
+      fetch(`${SUPABASE_URL}/rest/v1/why_quitting?user_id=eq.${uid}&limit=1`, { headers })
+        .then(r => r.json()).then(rows => {
+          if (Array.isArray(rows) && rows.length > 0) {
+            const row = rows[0];
+            const restored = {
+              primaryReason: row.primary_reason || '',
+              reasons: Array.isArray(row.reasons) ? row.reasons : []
+            };
+            setWhyImQuitting(restored);
+            localStorage.setItem('whyImQuitting', JSON.stringify(restored));
+          }
+        }).catch(() => {}),
+
+      // Earned badges
+      fetch(`${SUPABASE_URL}/rest/v1/earned_badges?user_id=eq.${uid}`, { headers })
+        .then(r => r.json()).then(rows => {
+          if (Array.isArray(rows) && rows.length > 0) {
+            const badgeIds = rows.map(r => r.badge_id);
+            setEarnedBadges(badgeIds);
+            localStorage.setItem('earnedBadges', JSON.stringify(badgeIds));
+          }
+        }).catch(() => {}),
+
+      // Activity log
+      fetch(`${SUPABASE_URL}/rest/v1/activity_log?user_id=eq.${uid}&order=logged_at.desc&limit=200`, { headers })
+        .then(r => r.json()).then(rows => {
+          if (Array.isArray(rows) && rows.length > 0) {
+            const mapped = rows.map(a => ({
+              id: a.id,
+              type: a.type,
+              duration: a.duration_minutes,
+              distance: a.distance,
+              date: a.logged_at
+            }));
+            setActivityLog(mapped);
+            localStorage.setItem('activityLog', JSON.stringify(mapped));
+          }
+        }).catch(() => {}),
+
+      // Liabilities (savings milestones)
+      fetch(`${SUPABASE_URL}/rest/v1/liabilities?user_id=eq.${uid}&limit=1`, { headers })
+        .then(r => r.json()).then(rows => {
+          if (Array.isArray(rows) && rows.length > 0 && Array.isArray(rows[0].items) && rows[0].items.length > 0) {
+            localStorage.setItem('savingsMilestones', JSON.stringify(rows[0].items));
+          }
+        }).catch(() => {})
+
+    ]).then(() => {
+      console.log('Data restore complete');
+    });
+
     // Check admin status after login
     setTimeout(() => checkAdminStatus(), 500);
     return user;
@@ -2581,7 +2660,19 @@ export default function BeatTheBet() {
         const updated = [...activityLog, activity];
         setActivityLog(updated);
         localStorage.setItem('activityLog', JSON.stringify(updated));
-        
+
+        // Sync to Supabase
+        const session = supabase.getSession();
+        if (session) {
+          supabase.from('activity_log').insert({
+            user_id: session.user.id,
+            type: activity.type,
+            duration_minutes: activity.duration,
+            distance: activity.distance || null,
+            logged_at: activity.date
+          }).catch(() => {});
+        }
+
         addPoints(10, `Logged ${activityTypes.find(t => t.id === newActivity.type)?.name}`);
         setNewActivity({ type: '', duration: '', distance: '' });
         setShowAddActivity(false);
@@ -3135,6 +3226,15 @@ export default function BeatTheBet() {
     const saveMilestones = (updated) => {
       setMilestones(updated);
       localStorage.setItem('savingsMilestones', JSON.stringify(updated));
+      // Sync to Supabase
+      const session = supabase.getSession();
+      if (session) {
+        supabase.from('liabilities').upsert({
+          user_id: session.user.id,
+          items: updated,
+          updated_at: new Date().toISOString()
+        }).catch(() => {});
+      }
     };
 
     const [editingMilestone, setEditingMilestone] = React.useState(null); // id of milestone being edited
@@ -5009,7 +5109,7 @@ export default function BeatTheBet() {
                 </p>
               </div>
               <button
-                onClick={() => setOnboardingStep(1)}
+                onClick={() => { const today = new Date().toISOString().split('T')[0]; setTempStartDate(today); setStartDate(new Date(today)); localStorage.setItem('startDate', new Date(today).toISOString()); syncProfileToSupabase({ start_date: new Date(today).toISOString() }).catch(() => {}); setOnboardingStep(2); }}
                 className="w-full bg-blue-500 hover:bg-blue-600 text-white rounded-xl py-4 font-bold text-lg transition-colors"
               >
                 Let's Do This
@@ -5019,43 +5119,6 @@ export default function BeatTheBet() {
                 className="w-full text-gray-500 text-sm mt-3 hover:text-gray-700"
               >
                 Skip setup (not recommended)
-              </button>
-            </div>
-          );
-
-        case 1: // Set quit date
-          return (
-            <div>
-              <h2 className="text-2xl font-bold text-gray-900 mb-4">When did you last gamble?</h2>
-              <p className="text-gray-700 mb-6">
-                This becomes your quit date - the day you started your recovery journey.
-              </p>
-              <div className="bg-yellow-50 border-l-4 border-yellow-500 rounded-lg p-4 mb-6">
-                <p className="text-sm text-gray-700">
-                  <strong>Be honest.</strong> If you gambled today, select today. Your timer is a source of pride, not shame.
-                </p>
-              </div>
-              <input
-                type="date"
-                value={tempStartDate}
-                onChange={(e) => setTempStartDate(e.target.value)}
-                max={new Date().toISOString().split('T')[0]}
-                className="w-full p-4 border-2 border-gray-300 rounded-xl focus:ring-2 focus:ring-blue-500 focus:border-transparent mb-6 text-lg"
-              />
-              <button
-                onClick={() => {
-                  if (tempStartDate) {
-                    const d = new Date(tempStartDate);
-                    setStartDate(d);
-                    localStorage.setItem('startDate', d.toISOString());
-                    syncProfileToSupabase({ start_date: d.toISOString() }).catch(() => {});
-                    setOnboardingStep(2);
-                  }
-                }}
-                disabled={!tempStartDate}
-                className="w-full bg-blue-500 hover:bg-blue-600 disabled:bg-gray-300 text-white rounded-xl py-4 font-bold text-lg transition-colors"
-              >
-                Continue
               </button>
             </div>
           );
@@ -5297,8 +5360,8 @@ export default function BeatTheBet() {
             {onboardingStep > 0 && onboardingStep < 6 && (
               <div className="mb-6">
                 <div className="flex justify-between text-xs text-gray-600 mb-2">
-                  <span>Step {onboardingStep} of 5</span>
-                  <span>{Math.round((onboardingStep / 5) * 100)}%</span>
+                  <span>Step {onboardingStep === 0 ? 1 : onboardingStep - 1} of 4</span>
+                  <span>{Math.round(((onboardingStep === 0 ? 1 : onboardingStep - 1) / 4) * 100)}%</span>
                 </div>
                 <div className="w-full bg-gray-200 rounded-full h-2">
                   <div 
@@ -5314,7 +5377,7 @@ export default function BeatTheBet() {
             {/* Back Button */}
             {onboardingStep > 0 && onboardingStep < 6 && (
               <button
-                onClick={() => setOnboardingStep(onboardingStep - 1)}
+                onClick={() => setOnboardingStep(onboardingStep === 2 ? 0 : onboardingStep - 1)}
                 className="w-full text-gray-500 text-sm mt-4 hover:text-gray-700"
               >
                 ← Back
@@ -5334,22 +5397,32 @@ export default function BeatTheBet() {
 
     const addTextReason = () => {
       if (!newReasonText.trim()) return;
-      
+
       const newReason = {
         id: Date.now(),
         type: 'text',
         content: newReasonText.trim(),
         timestamp: new Date().toISOString()
       };
-      
+
       const updated = {
         ...whyImQuitting,
         reasons: [...whyImQuitting.reasons, newReason]
       };
-      
+
       setWhyImQuitting(updated);
       localStorage.setItem('whyImQuitting', JSON.stringify(updated));
       setNewReasonText('');
+      // Sync to Supabase
+      const session = supabase.getSession();
+      if (session) {
+        supabase.from('why_quitting').upsert({
+          user_id: session.user.id,
+          primary_reason: updated.primaryReason,
+          reasons: updated.reasons,
+          updated_at: new Date().toISOString()
+        }).catch(() => {});
+      }
     };
 
     const savePrimaryReason = () => {
@@ -5360,6 +5433,16 @@ export default function BeatTheBet() {
       setWhyImQuitting(updated);
       localStorage.setItem('whyImQuitting', JSON.stringify(updated));
       setEditingPrimary(false);
+      // Sync to Supabase
+      const session = supabase.getSession();
+      if (session) {
+        supabase.from('why_quitting').upsert({
+          user_id: session.user.id,
+          primary_reason: primaryText.trim(),
+          reasons: updated.reasons,
+          updated_at: new Date().toISOString()
+        }).catch(() => {});
+      }
     };
 
     const deleteReason = (id) => {
@@ -6647,6 +6730,17 @@ export default function BeatTheBet() {
         const updated = [...earnedBadges, ...newBadges];
         setEarnedBadges(updated);
         localStorage.setItem('earnedBadges', JSON.stringify(updated));
+        // Sync new badges to Supabase
+        const session = supabase.getSession();
+        if (session) {
+          newBadges.forEach(badgeId => {
+            supabase.from('earned_badges').upsert({
+              user_id: session.user.id,
+              badge_id: badgeId,
+              earned_at: new Date().toISOString()
+            }).catch(() => {});
+          });
+        }
       }
     };
 
@@ -6862,6 +6956,8 @@ export default function BeatTheBet() {
       }
       setUsername(trimmed);
       localStorage.setItem('username', trimmed);
+      localStorage.setItem('chatUsername', trimmed);
+      setHasSetUsername(true);
       // Also update currentUser
       const updatedUser = { ...currentUser, username: trimmed };
       setCurrentUser(updatedUser);
@@ -6918,29 +7014,26 @@ export default function BeatTheBet() {
           totalMoneySaved: parseFloat(totalSaved),
           dailySpend: dailyGamblingSpend,
           journalEntries: journalEntries.length,
-          badgesEarned: badges.length,
-          activitiesCompleted: completedActivities.length,
+          badgesEarned: earnedBadges.length,
           currentLevel: level,
           totalPoints: points
         },
-        
+
         // Detailed Data
         journalEntries: journalEntries.map(entry => ({
           date: entry.date,
-          prompt: entry.prompt,
-          entry: entry.entry,
+          mode: entry.mode,
           mood: entry.mood,
-          isFavorite: entry.isFavorite
+          content: entry.content,
+          responses: entry.responses
         })),
-        
-        badges: badges,
-        
-        completedActivities: completedActivities,
-        
-        savingsGoals: savingsGoals.map(goal => ({
-          name: goal.name,
-          icon: goal.icon,
-          amount: goal.amount
+
+        earnedBadges: earnedBadges,
+
+        activityLog: activityLog.map(a => ({
+          type: a.type,
+          duration: a.duration,
+          date: a.date
         })),
         
         whyImQuitting: whyImQuitting,
@@ -7008,9 +7101,9 @@ export default function BeatTheBet() {
    Average Per Week: $${(dailyGamblingSpend * 7).toFixed(2)}
 
 🏆 Achievements
-   Badges Earned: ${badges.length}
+   Badges Earned: ${earnedBadges.length}
    Journal Entries: ${journalEntries.length}
-   Activities Completed: ${completedActivities.length}
+   Activities Completed: ${activityLog.length}
    Savings Goals: ${savingsGoals.length}
 
 📝 Journal Activity
