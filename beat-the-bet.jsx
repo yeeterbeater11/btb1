@@ -4102,6 +4102,14 @@ export default function BeatTheBet() {
       setLastSentAt(now);
 
       const session = supabase.getSession();
+
+      // If no session, user needs to re-login
+      if (!session) {
+        showError('Your session has expired. Please log out and log back in.');
+        setSending(false);
+        return;
+      }
+
       const optimisticMsg = {
         id: `temp-${now}`,
         username,
@@ -4126,7 +4134,7 @@ export default function BeatTheBet() {
             'Prefer': 'return=representation'
           },
           body: JSON.stringify({
-            user_id: session?.user?.id,
+            user_id: session?.user?.id || null,
             username,
             message: newMessage.trim(),
             room: chatRoom,
@@ -4135,13 +4143,16 @@ export default function BeatTheBet() {
         });
 
         if (!res.ok) {
-          // Remove optimistic message on failure
+          const errData = await res.json().catch(() => ({}));
+          const errMsg = errData.message || errData.error || `Error ${res.status}`;
           setMessages(prev => prev.filter(m => m.id !== optimisticMsg.id));
-          showError('Failed to send message. Please try again.');
+          showError(`Could not send: ${errMsg}`);
+          console.error('Send failed:', res.status, errData);
         }
       } catch (e) {
         setMessages(prev => prev.filter(m => m.id !== optimisticMsg.id));
-        showError('Failed to send message.');
+        showError(`Could not send: ${e.message}`);
+        console.error('Send error:', e);
       }
 
       setSending(false);
