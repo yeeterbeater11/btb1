@@ -313,26 +313,48 @@ export default function BeatTheBet() {
       setAdminCheckDone(true);
       return;
     }
+
+    const headers = {
+      'apikey': SUPABASE_ANON_KEY,
+      'Authorization': `Bearer ${session.access_token}`,
+      'Content-Type': 'application/json'
+    };
+
     try {
-      const res = await fetch(
-        `${SUPABASE_URL}/rest/v1/rpc/is_admin`,
-        {
-          method: 'POST',
-          headers: {
-            'apikey': SUPABASE_ANON_KEY,
-            'Authorization': `Bearer ${session.access_token}`,
-            'Content-Type': 'application/json'
-          },
-          body: JSON.stringify({})
-        }
+      // Primary: check admins table directly by email
+      // More reliable than RPC since auth.uid() can be tricky in functions
+      const emailCheck = await fetch(
+        `${SUPABASE_URL}/rest/v1/admins?select=email&email=eq.${encodeURIComponent(session.user.email)}`,
+        { headers }
       );
-      if (res.ok) {
-        const result = await res.json();
+      console.log('[Admin] email check status:', emailCheck.status);
+
+      if (emailCheck.ok) {
+        const data = await emailCheck.json();
+        console.log('[Admin] email check result:', data);
+        if (Array.isArray(data) && data.length > 0) {
+          setIsAdminUser(true);
+          setAdminCheckDone(true);
+          return;
+        }
+      }
+
+      // Secondary: try is_admin() RPC
+      const rpcRes = await fetch(
+        `${SUPABASE_URL}/rest/v1/rpc/is_admin`,
+        { method: 'POST', headers, body: JSON.stringify({}) }
+      );
+      const rawText = await rpcRes.text();
+      console.log('[Admin] RPC status:', rpcRes.status, 'body:', rawText);
+
+      if (rpcRes.ok) {
+        const result = JSON.parse(rawText);
         setIsAdminUser(result === true);
       } else {
         setIsAdminUser(false);
       }
     } catch (e) {
+      console.error('[Admin] checkAdminStatus error:', e);
       setIsAdminUser(false);
     } finally {
       setAdminCheckDone(true);
@@ -8246,20 +8268,19 @@ Keep going! Every day counts. 💪
 
       try {
         // Flagged messages
+        console.log('[Admin] fetching flagged messages...');
         const msgRes = await fetch(
           `${SUPABASE_URL}/rest/v1/messages?flagged=eq.true&order=created_at.desc&limit=100`,
           { headers }
         );
+        const msgText = await msgRes.text();
+        console.log('[Admin] messages response:', msgRes.status, msgText.slice(0, 200));
         if (msgRes.ok) {
-          const msgs = await msgRes.json();
+          const msgs = JSON.parse(msgText);
           setFlaggedMessages(Array.isArray(msgs) ? msgs : []);
         } else {
-          const errText = await msgRes.text();
-          console.warn('Messages fetch failed:', msgRes.status, errText);
           setFlaggedMessages([]);
-          if (msgRes.status === 403 || msgRes.status === 401) {
-            setLoadError(`Permission denied (${msgRes.status}). Make sure admin_fix.sql has been run in Supabase.`);
-          }
+          setLoadError(`Messages fetch failed (${msgRes.status}): ${msgText.slice(0, 100)}`);
         }
 
         // All profiles
