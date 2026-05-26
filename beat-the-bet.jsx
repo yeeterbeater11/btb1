@@ -8245,21 +8245,29 @@ Keep going! Every day counts. 💪
   const AdminPanel = () => {
     const [flaggedMessages, setFlaggedMessages] = React.useState([]);
     const [userStats, setUserStats] = React.useState(null);
-    const [loading, setLoading] = React.useState(true);
+    const [loading, setLoading] = React.useState(false);
     const [loadError, setLoadError] = React.useState('');
     const [newAdminEmail, setNewAdminEmail] = React.useState('');
     const [activeAdminTab, setActiveAdminTab] = React.useState('messages');
 
-    React.useEffect(() => { loadAdminData(); }, []);
+    React.useEffect(() => {
+      console.log('[Admin] Panel mounted, loading data...');
+      loadAdminData();
+      return () => console.log('[Admin] Panel unmounted');
+    }, []);
 
     const loadAdminData = async () => {
       setLoading(true);
+      setLoadError('');
       const session = supabase.getSession();
-      if (!session) { setLoading(false); return; }
+      if (!session) {
+        setLoading(false);
+        setLoadError('Not logged in.');
+        return;
+      }
       const token = session.access_token;
       const headers = { 'apikey': SUPABASE_ANON_KEY, 'Authorization': `Bearer ${token}` };
 
-      setLoadError('');
       // Safety timeout
       const timeout = setTimeout(() => {
         setLoading(false);
@@ -8284,29 +8292,36 @@ Keep going! Every day counts. 💪
         }
 
         // All profiles
+        console.log('[Admin] fetching profiles...');
         const userRes = await fetch(
           `${SUPABASE_URL}/rest/v1/profiles?select=id,username,created_at,points,level&order=created_at.desc&limit=100`,
           { headers }
         );
+        const userText = await userRes.text();
+        console.log('[Admin] profiles response:', userRes.status, userText.slice(0, 200));
         if (userRes.ok) {
-          const users = await userRes.json();
+          const users = JSON.parse(userText);
           setUserStats({ total: Array.isArray(users) ? users.length : 0, users: Array.isArray(users) ? users : [] });
         } else {
           setUserStats({ total: 0, users: [] });
         }
 
         // Admin list
+        console.log('[Admin] fetching admin list...');
         const adminRes = await fetch(
           `${SUPABASE_URL}/rest/v1/admins?select=email,added_at&order=added_at.asc`,
           { headers }
         );
+        const adminText = await adminRes.text();
+        console.log('[Admin] admins response:', adminRes.status, adminText.slice(0, 200));
         if (adminRes.ok) {
-          const admins = await adminRes.json();
+          const admins = JSON.parse(adminText);
           if (Array.isArray(admins)) {
             setAdminEmails(admins.map(a => a.email));
             localStorage.setItem('adminEmails', JSON.stringify(admins.map(a => a.email)));
           }
         }
+        console.log('[Admin] all fetches complete, setting loading false');
       } catch (e) {
         console.error('Admin load error:', e);
         setLoadError(`Error: ${e.message}`);
@@ -8426,20 +8441,23 @@ Keep going! Every day counts. 💪
         </div>
         <div className="flex-1 p-6 overflow-y-auto">
           <div className="max-w-2xl mx-auto">
-            {loading && (
+            {loading && flaggedMessages.length === 0 && !userStats && (
               <div className="text-center py-12">
                 <div className="w-8 h-8 border-4 border-gray-200 border-t-gray-800 rounded-full animate-spin mx-auto mb-3"></div>
                 <p className="text-gray-500">Loading...</p>
               </div>
             )}
-            {!loading && loadError && (
+            {loading && (flaggedMessages.length > 0 || userStats) && (
+              <div className="text-xs text-gray-400 text-center py-1">Refreshing...</div>
+            )}
+            {loadError && (
               <div className="bg-red-50 border-l-4 border-red-500 rounded-lg p-4 mb-4">
                 <p className="font-semibold text-red-800 mb-1">Could not load admin data</p>
                 <p className="text-sm text-red-700">{loadError}</p>
                 <button onClick={loadAdminData} className="mt-3 bg-red-500 text-white px-4 py-2 rounded-lg text-sm font-semibold">Retry</button>
               </div>
             )}
-            {!loading && activeAdminTab === 'messages' && (
+            {(!loading || flaggedMessages.length > 0) && activeAdminTab === 'messages' && (
               <div className="space-y-4">
                 <p className="text-sm text-gray-500">{flaggedMessages.length === 0 ? 'No flagged messages.' : `${flaggedMessages.length} awaiting review.`}</p>
                 {flaggedMessages.map(msg => (
@@ -8454,7 +8472,7 @@ Keep going! Every day counts. 💪
                 ))}
               </div>
             )}
-            {!loading && activeAdminTab === 'users' && userStats && (
+            {(!loading || userStats) && activeAdminTab === 'users' && userStats && (
               <div className="space-y-3">
                 <div className="grid grid-cols-2 gap-4 mb-4">
                   <div className="bg-white rounded-xl shadow-md p-5 text-center"><p className="text-3xl font-bold text-gray-800">{userStats.total}</p><p className="text-sm text-gray-500">Total users</p></div>
@@ -8469,7 +8487,7 @@ Keep going! Every day counts. 💪
                 ))}
               </div>
             )}
-            {!loading && activeAdminTab === 'admins' && (
+            {activeAdminTab === 'admins' && (
               <div className="space-y-4">
                 <div className="bg-white rounded-xl shadow-md p-5">
                   <h3 className="font-bold text-gray-800 mb-4">Admin Accounts</h3>
