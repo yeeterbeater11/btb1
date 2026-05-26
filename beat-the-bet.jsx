@@ -310,15 +310,28 @@ export default function BeatTheBet() {
     const session = supabase.getSession();
     if (!session) { setIsAdminUser(false); return; }
     try {
+      // Use the is_admin() database function - avoids auth.users permission issue
       const res = await fetch(
-        `${SUPABASE_URL}/rest/v1/admins?email=eq.${encodeURIComponent(session.user.email)}&select=email`,
-        { headers: { 'apikey': SUPABASE_ANON_KEY, 'Authorization': `Bearer ${session.access_token}` } }
+        `${SUPABASE_URL}/rest/v1/rpc/is_admin`,
+        {
+          method: 'POST',
+          headers: {
+            'apikey': SUPABASE_ANON_KEY,
+            'Authorization': `Bearer ${session.access_token}`,
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify({})
+        }
       );
       if (res.ok) {
-        const data = await res.json();
-        setIsAdminUser(data.length > 0);
+        const result = await res.json();
+        setIsAdminUser(result === true);
+      } else {
+        setIsAdminUser(false);
       }
-    } catch (e) { setIsAdminUser(false); }
+    } catch (e) {
+      setIsAdminUser(false);
+    }
   }, []);
 
   const isAdmin = () => isAdminUser;
@@ -8181,8 +8194,11 @@ Keep going! Every day counts. 💪
       const token = session.access_token;
       const headers = { 'apikey': SUPABASE_ANON_KEY, 'Authorization': `Bearer ${token}` };
 
+      // Safety timeout - never stay loading more than 8 seconds
+      const timeout = setTimeout(() => setLoading(false), 8000);
+
       try {
-        // Flagged messages - admin can see all
+        // Flagged messages
         const msgRes = await fetch(
           `${SUPABASE_URL}/rest/v1/messages?flagged=eq.true&order=created_at.desc&limit=100`,
           { headers }
@@ -8190,6 +8206,9 @@ Keep going! Every day counts. 💪
         if (msgRes.ok) {
           const msgs = await msgRes.json();
           setFlaggedMessages(Array.isArray(msgs) ? msgs : []);
+        } else {
+          console.warn('Messages fetch failed:', msgRes.status, await msgRes.text());
+          setFlaggedMessages([]);
         }
 
         // All profiles
@@ -8201,9 +8220,12 @@ Keep going! Every day counts. 💪
           const users = await userRes.json();
           const safeUsers = Array.isArray(users) ? users : [];
           setUserStats({ total: safeUsers.length, users: safeUsers });
+        } else {
+          console.warn('Profiles fetch failed:', userRes.status, await userRes.text());
+          setUserStats({ total: 0, users: [] });
         }
 
-        // Admin list from Supabase
+        // Admin list
         const adminRes = await fetch(
           `${SUPABASE_URL}/rest/v1/admins?select=email,added_at&order=added_at.asc`,
           { headers }
@@ -8218,8 +8240,12 @@ Keep going! Every day counts. 💪
         }
       } catch (e) {
         console.error('Admin load error:', e);
+        setFlaggedMessages([]);
+        setUserStats({ total: 0, users: [] });
+      } finally {
+        clearTimeout(timeout);
+        setLoading(false);
       }
-      setLoading(false);
     };
 
     const approveMessage = async (msg) => {
@@ -8250,6 +8276,18 @@ Keep going! Every day counts. 💪
 
       const session = supabase.getSession();
       try {
+        // Look up the user_id for this email from profiles
+        // (user must have signed up already)
+        const lookupRes = await fetch(
+          `${SUPABASE_URL}/rest/v1/profiles?select=id&limit=1`,
+          {
+            headers: {
+              'apikey': SUPABASE_ANON_KEY,
+              'Authorization': `Bearer ${session.access_token}`
+            }
+          }
+        );
+
         const res = await fetch(`${SUPABASE_URL}/rest/v1/admins`, {
           method: 'POST',
           headers: {
@@ -8261,15 +8299,15 @@ Keep going! Every day counts. 💪
           body: JSON.stringify({ email: trimmed })
         });
         if (!res.ok) {
-          const err = await res.json();
-          showError(err.message || 'Failed to add admin.');
+          const err = await res.json().catch(() => ({}));
+          showError(err.message || 'Failed to add admin. Make sure the user has signed up first.');
           return;
         }
         const updated = [...adminEmails, trimmed];
         setAdminEmails(updated);
         localStorage.setItem('adminEmails', JSON.stringify(updated));
         setNewAdminEmail('');
-        showSuccess(`${trimmed} added as admin.`);
+        showSuccess(`${trimmed} added. Note: their user_id will be linked when they next log in.`);
       } catch (e) {
         showError('Failed to add admin.');
       }
@@ -8370,7 +8408,11 @@ Keep going! Every day counts. 💪
                   </div>
                 </div>
                 <div className="bg-yellow-50 border-l-4 border-yellow-500 rounded-lg p-4">
-                  <p className="text-sm text-gray-700">Admin access is stored locally. Add an email here and that user will see the Admin Panel when logged in.</p>
+                  <p className="text-sm text-gray-700 mb-2">Add an email here to grant admin access. The user must have already signed up.</p>
+                  <p className="text-xs text-gray-500">After adding a new admin email, run this in Supabase SQL Editor to activate their access:</p>
+                  <code className="block text-xs bg-white rounded p-2 mt-1 text-gray-700 select-all">
+                    {"update public.admins a set user_id = u.id from auth.users u where lower(u.email) = lower(a.email);"}
+                  </code>
                 </div>
               </div>
             )}
