@@ -8291,37 +8291,58 @@ Keep going! Every day counts. 💪
           setLoadError(`Messages fetch failed (${msgRes.status}): ${msgText.slice(0, 100)}`);
         }
 
-        // All profiles
-        console.log('[Admin] fetching profiles...');
-        const userRes = await fetch(
-          `${SUPABASE_URL}/rest/v1/profiles?select=id,username,created_at,points,level&order=created_at.desc&limit=100`,
-          { headers }
-        );
-        const userText = await userRes.text();
-        console.log('[Admin] profiles response:', userRes.status, userText.slice(0, 200));
-        if (userRes.ok) {
-          const users = JSON.parse(userText);
-          setUserStats({ total: Array.isArray(users) ? users.length : 0, users: Array.isArray(users) ? users : [] });
+        // Run profiles and admins fetches in parallel with individual timeouts
+        // so one failing fetch doesn't hang the whole panel
+        const withTimeout = (promise, ms, label) => Promise.race([
+          promise,
+          new Promise((_, reject) => setTimeout(() => reject(new Error(`${label} timed out after ${ms}ms`)), ms))
+        ]);
+
+        const [profilesResult, adminsResult] = await Promise.allSettled([
+          withTimeout(
+            fetch(`${SUPABASE_URL}/rest/v1/profiles?select=id,username,created_at,points,level&order=created_at.desc&limit=100`, { headers })
+              .then(async r => ({ status: r.status, text: await r.text() })),
+            5000, 'profiles'
+          ),
+          withTimeout(
+            fetch(`${SUPABASE_URL}/rest/v1/admins?select=email,added_at&order=added_at.asc`, { headers })
+              .then(async r => ({ status: r.status, text: await r.text() })),
+            5000, 'admins'
+          )
+        ]);
+
+        // Handle profiles
+        if (profilesResult.status === 'fulfilled') {
+          const { status, text } = profilesResult.value;
+          console.log('[Admin] profiles response:', status, text.slice(0, 200));
+          if (status === 200) {
+            const users = JSON.parse(text);
+            setUserStats({ total: Array.isArray(users) ? users.length : 0, users: Array.isArray(users) ? users : [] });
+          } else {
+            console.warn('[Admin] profiles fetch failed:', status, text.slice(0, 100));
+            setUserStats({ total: 0, users: [] });
+          }
         } else {
+          console.warn('[Admin] profiles fetch rejected:', profilesResult.reason?.message);
           setUserStats({ total: 0, users: [] });
         }
 
-        // Admin list
-        console.log('[Admin] fetching admin list...');
-        const adminRes = await fetch(
-          `${SUPABASE_URL}/rest/v1/admins?select=email,added_at&order=added_at.asc`,
-          { headers }
-        );
-        const adminText = await adminRes.text();
-        console.log('[Admin] admins response:', adminRes.status, adminText.slice(0, 200));
-        if (adminRes.ok) {
-          const admins = JSON.parse(adminText);
-          if (Array.isArray(admins)) {
-            setAdminEmails(admins.map(a => a.email));
-            localStorage.setItem('adminEmails', JSON.stringify(admins.map(a => a.email)));
+        // Handle admins
+        if (adminsResult.status === 'fulfilled') {
+          const { status, text } = adminsResult.value;
+          console.log('[Admin] admins response:', status, text.slice(0, 200));
+          if (status === 200) {
+            const admins = JSON.parse(text);
+            if (Array.isArray(admins)) {
+              setAdminEmails(admins.map(a => a.email));
+              localStorage.setItem('adminEmails', JSON.stringify(admins.map(a => a.email)));
+            }
           }
+        } else {
+          console.warn('[Admin] admins fetch rejected:', adminsResult.reason?.message);
         }
-        console.log('[Admin] all fetches complete, setting loading false');
+
+        console.log('[Admin] all fetches complete');
       } catch (e) {
         console.error('Admin load error:', e);
         setLoadError(`Error: ${e.message}`);
