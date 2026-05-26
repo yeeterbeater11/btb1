@@ -337,7 +337,7 @@ export default function BeatTheBet() {
         withTimeout(
           fetch(`${SUPABASE_URL}/rest/v1/messages?flagged=eq.true&order=created_at.desc&limit=100`, { headers })
             .then(async r => ({ status: r.status, data: await r.json() })),
-          5000, 'messages'
+          5000, 'flagged_messages'
         ),
         withTimeout(
           fetch(`${SUPABASE_URL}/rest/v1/profiles?select=id,username,created_at,points,level&order=created_at.desc&limit=100`, { headers })
@@ -352,7 +352,9 @@ export default function BeatTheBet() {
       ]);
 
       if (msgsResult.status === 'fulfilled' && msgsResult.value.status === 200) {
-        setAdminFlaggedMessages(Array.isArray(msgsResult.value.data) ? msgsResult.value.data : []);
+        const allFlagged = Array.isArray(msgsResult.value.data) ? msgsResult.value.data : [];
+        setAdminFlaggedMessages(allFlagged);
+        // Note: queue splitting happens inside AdminPanel component
       }
       if (profilesResult.status === 'fulfilled' && profilesResult.value.status === 200) {
         const users = profilesResult.value.data;
@@ -4232,23 +4234,246 @@ export default function BeatTheBet() {
     const messagesEndRef = React.useRef(null);
     const unsubscribeRef = React.useRef(null);
 
-    // Moderation word filter
-    const bannedWords = [
-      'bet', 'gambling site', 'casino', 'odds', 'stake', 'punter',
-      'http', 'www.', '.com', '.net', '.org', 'click here',
-      'free money', 'win big', 'jackpot', 'deposit bonus'
-    ];
+    // ============================================================
+    // MODERATION SYSTEM
+    // Three-tier classification with contextual awareness
+    // ============================================================
 
-    const moderateMessage = (text) => {
+    const MODERATION = {
+      critical: {
+        operators: [
+          "sportsbet", "ladbrokes", "pointsbet", "betfair", "bet365",
+          "neds", "bluebet", "betr", "topsport", "unibet", "draftkings",
+          "roobet", "stake.com", "bc.game", "shuffle.com", "tab.com"
+        ],
+        scams: [
+          "vip picks", "vip group", "vip betting", "premium picks",
+          "pay for picks", "dm for picks", "dm me picks",
+          "i have a method", "guaranteed returns", "guaranteed wins",
+          "inside info", "fixed match", "bookie exploit",
+          "join my group", "join my server", "sports signals",
+          "betting signals", "tipster group", "i can help you win",
+          "you can beat the system", "easy profit"
+        ],
+        offplatform: [
+          "telegram", "whatsapp", "signal app", "wickr", "wire app",
+          "message me privately", "contact me privately",
+          "reach out elsewhere", "talk off app", "talk offsite",
+          "join my discord", "find me on", "hit me up on"
+        ],
+        financial: [
+          "i can lend you", "i will lend you", "cash advance",
+          "ill front you", "i can front you",
+          "flip your money", "double your money",
+          "investment opportunity", "send me money",
+          "recover your losses", "i can help you recover"
+        ],
+        promotion: [
+          "free bet", "free bets", "sign up bonus", "signup bonus",
+          "deposit bonus", "welcome bonus", "matched bet", "matched betting",
+          "no deposit bonus", "cashback offer", "reload bonus",
+          "you should bet", "you should gamble", "try this site",
+          "use my code", "referral code"
+        ],
+      },
+      high: {
+        glamorizing: [
+          "turned $", "won $", "made $", "i won big", "biggest win",
+          "easy payout", "massive cashout", "hit huge", "made thousands",
+          "made hundreds", "quick win", "won a fortune",
+          "came up huge", "cleaned up", "smashed it"
+        ],
+        activegambling: [
+          "my parlay", "my multi", "my accumulator", "my bet slip",
+          "cashed out", "boosted odds", "value bet", "the line moved",
+          "martingale", "bankroll management", "unit sizing", "units won",
+          "ev+", "expected value", "roi on", "profitable strategy",
+          "backing", "laying", "arbing", "arbitrage bet"
+        ],
+        sabotage: [
+          "one bet wont hurt", "just gamble responsibly",
+          "moderation works", "you can control it",
+          "gambling isnt addictive", "casinos are beatable",
+          "you just need discipline", "i gamble every day and im fine",
+          "youre overreacting", "win your losses back",
+          "just win it back", "you can quit later", "everyone gambles",
+          "gambling is fine", "its not that bad"
+        ],
+        toxic: [
+          "youre pathetic", "youre weak", "just stop gambling",
+          "you deserve it", "its your fault", "youre an addict",
+          "youre hopeless", "no one cares"
+        ],
+        crypto: [
+          "crypto casino", "crypto gambling", "bitcoin casino",
+          "eth casino", "nft gambling", "web3 casino", "defi gambling"
+        ],
+      },
+      support: {
+        crisis: [
+          "kill myself", "want to die", "end it all",
+          "no reason to live", "ending it tonight",
+          "everyone would be better off without me",
+          "cant go on", "dont want to be here anymore",
+          "goodbye everyone", "this is my last"
+        ],
+        distress: [
+          "i relapsed", "ive relapsed", "just relapsed",
+          "i lost everything", "ruined my life", "destroyed my life",
+          "cant stop thinking about betting", "urge is strong",
+          "really struggling", "about to give in",
+          "i want to gamble", "feeling hopeless", "feeling lost",
+          "dont know what to do", "need help"
+        ],
+      },
+      recoveryContext: [
+        "i relapsed", "trying to quit", "in recovery", "getting help",
+        "seeing a counsellor", "seeing a therapist", "gamble free",
+        "staying clean", "my sponsor", "ga meeting", "urge is",
+        "struggling with", "day clean", "days clean", "im fighting",
+        "fighting the urge", "reaching out", "i need support"
+      ],
+    };
+    // Word-boundary aware matching — "bet" won't catch "better"
+    const matchesPhrase = (text, phrase) => {
       const lower = text.toLowerCase();
-      for (const word of bannedWords) {
-        if (lower.includes(word)) {
-          return { ok: false, reason: `Messages can't contain "${word}" — this is a recovery space.` };
+      // For multi-word phrases, just check includes
+      if (phrase.includes(' ')) return lower.includes(phrase);
+      // For single words, use word boundary check
+      const regex = new RegExp(`\\b${phrase.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\b`, 'i');
+      return regex.test(text);
+    };
+
+    // Check if message has recovery context (shifts interpretation)
+    const hasRecoveryContext = (text) => {
+      return MODERATION.recoveryContext.some(phrase => text.toLowerCase().includes(phrase));
+    };
+
+    // Main classifier
+    const classifyMessage = (text, room = 'general') => {
+      if (text.length > 500) return { action: 'block', level: null, reason: 'Message too long (500 chars max).', matched: null, score: 100 };
+      if (text.trim().length < 2) return { action: 'block', level: null, reason: 'Message too short.', matched: null, score: 100 };
+
+      const inRecoveryContext = hasRecoveryContext(text);
+
+      // Check CRITICAL tier first
+      const criticalCategories = Object.entries(MODERATION.critical);
+      for (const [category, phrases] of criticalCategories) {
+        for (const phrase of phrases) {
+          if (matchesPhrase(text, phrase)) {
+            // Recovery context can downgrade some critical matches
+            // e.g. "I used to use sportsbet but now I'm clean" — still flag but don't block
+            if (inRecoveryContext && category !== 'scams' && category !== 'financial' && category !== 'offplatform') {
+              return {
+                action: 'flag',
+                level: 'high',
+                reason: 'Contains gambling platform reference in recovery context.',
+                matched: phrase,
+                score: 60
+              };
+            }
+            return {
+              action: 'hide',
+              level: 'critical',
+              reason: getCriticalReason(category),
+              matched: phrase,
+              score: 95
+            };
+          }
         }
       }
-      if (text.length > 500) return { ok: false, reason: 'Message too long (500 chars max).' };
-      if (text.trim().length < 2) return { ok: false, reason: 'Message too short.' };
-      return { ok: true };
+
+      // Check HIGH RISK tier
+      const highCategories = Object.entries(MODERATION.high);
+      for (const [category, phrases] of highCategories) {
+        for (const phrase of phrases) {
+          if (matchesPhrase(text, phrase)) {
+            // Recovery context significantly changes interpretation for glamorizing/active gambling
+            if (inRecoveryContext && (category === 'glamorizing' || category === 'activegambling')) {
+              return {
+                action: 'flag',
+                level: 'support',
+                reason: 'Discusses gambling in recovery context — flagged for support review.',
+                matched: phrase,
+                score: 40
+              };
+            }
+            return {
+              action: 'flag',
+              level: 'high',
+              reason: getHighReason(category),
+              matched: phrase,
+              score: 75
+            };
+          }
+        }
+      }
+
+      // Check SUPPORT tier — these always go through but enter support queue
+      for (const phrase of MODERATION.support.crisis) {
+        if (text.toLowerCase().includes(phrase)) {
+          return {
+            action: 'allow',
+            level: 'critical', // Crisis is critical severity but message stays visible
+            reason: 'Crisis language detected — escalated to support queue.',
+            matched: phrase,
+            score: 90,
+            isCrisis: true
+          };
+        }
+      }
+
+      for (const phrase of MODERATION.support.distress) {
+        if (text.toLowerCase().includes(phrase)) {
+          return {
+            action: 'allow',
+            level: 'support',
+            reason: 'Recovery distress detected — entered in support queue.',
+            matched: phrase,
+            score: 70
+          };
+        }
+      }
+
+      // Interest chat redirection — flag gambling discussion in hobby rooms
+      if (room !== 'general' && room !== 'cravings') {
+        const gamblingTermsInHobbyChat = ['casino', 'pokies', 'slots', 'roulette', 'blackjack', 'parlay', 'accumulator'];
+        for (const term of gamblingTermsInHobbyChat) {
+          if (matchesPhrase(text, term) && !inRecoveryContext) {
+            return {
+              action: 'redirect',
+              level: 'high',
+              reason: 'Gambling discussion is better suited to the General Support space.',
+              matched: term,
+              score: 60
+            };
+          }
+        }
+      }
+
+      return { action: 'allow', level: null, reason: null, matched: null, score: 0 };
+    };
+
+    const getCriticalReason = (category) => {
+      const reasons = {
+        operators: 'This content references a gambling operator.',
+        scams: 'This content appears to be promoting a betting service or scheme.',
+        offplatform: "Attempts to move users off this platform aren't allowed in this space.",
+        financial: "This content involves financial solicitation, which isn't safe here.",
+        promotion: "This content promotes gambling, which goes against this community's purpose.",
+      };
+      return reasons[category] || 'This content may negatively affect recovery for others in the community.';
+    };
+
+    const getHighReason = (category) => {
+      const reasons = {
+        glamorizing: 'This content glamorizes gambling wins, which can be triggering in a recovery space.',
+        activegambling: "This content discusses active gambling, which may affect others' recovery.",
+        sabotage: "This content may undermine others' recovery efforts.",
+        toxic: 'This content may be harmful to other members of this community.',
+        crypto: 'This content references crypto gambling platforms.',
+      };
+      return reasons[category] || 'This content has been flagged for review.';
     };
 
     const rooms = [
@@ -4347,10 +4572,18 @@ export default function BeatTheBet() {
         return;
       }
 
-      // Moderate
-      const check = moderateMessage(newMessage.trim());
-      if (!check.ok) {
-        showError(check.reason);
+      // Classify message
+      const classification = classifyMessage(newMessage.trim(), chatRoom);
+
+      // Block: critical promo/scam/financial — don't send at all
+      if (classification.action === 'hide') {
+        showError(classification.reason);
+        return;
+      }
+
+      // Redirect: gambling talk in hobby chat
+      if (classification.action === 'redirect') {
+        showError(classification.reason);
         return;
       }
 
@@ -4394,7 +4627,12 @@ export default function BeatTheBet() {
             username,
             message: newMessage.trim(),
             room: chatRoom,
-            flagged: false
+            flagged: classification.action === 'flag' || classification.isCrisis || false,
+            moderation_level: classification.level || null,
+            moderation_reason: classification.reason || null,
+            moderation_matched: classification.matched || null,
+            moderation_score: classification.score || null,
+            reviewed: false
           })
         });
 
@@ -8404,7 +8642,10 @@ Keep going! Every day counts. 💪
 
   const AdminPanel = React.memo(() => {
     const [newAdminEmail, setNewAdminEmail] = React.useState('');
-    const [activeAdminTab, setActiveAdminTab] = React.useState('messages');
+    const [activeAdminTab, setActiveAdminTab] = React.useState('critical');
+    const [criticalQueue, setCriticalQueue] = React.useState([]);
+    const [highQueue, setHighQueue] = React.useState([]);
+    const [supportQueue, setSupportQueue] = React.useState([]);
 
     // Use parent-level state so data survives remounts
     const flaggedMessages = adminFlaggedMessages;
@@ -8420,15 +8661,45 @@ Keep going! Every day counts. 💪
       }
     }, []); // Empty deps - only run on mount
 
+    // Split flaggedMessages into queues when data loads
+    React.useEffect(() => {
+      if (flaggedMessages.length > 0) {
+        setCriticalQueue(flaggedMessages.filter(m => m.moderation_level === 'critical'));
+        setHighQueue(flaggedMessages.filter(m => m.moderation_level === 'high' || !m.moderation_level));
+      }
+    }, [flaggedMessages]);
+
+    // Also fetch support queue separately (not flagged=true)
+    React.useEffect(() => {
+      const fetchSupportQueue = async () => {
+        const session = supabase.getSession();
+        if (!session) return;
+        try {
+          const res = await fetch(
+            `${SUPABASE_URL}/rest/v1/messages?moderation_level=eq.support&reviewed=eq.false&order=created_at.desc&limit=50`,
+            { headers: { 'apikey': SUPABASE_ANON_KEY, 'Authorization': `Bearer ${session.access_token}` } }
+          );
+          if (res.ok) {
+            const data = await res.json();
+            setSupportQueue(Array.isArray(data) ? data : []);
+          }
+        } catch (e) {}
+      };
+      if (adminUserStats) fetchSupportQueue();
+    }, [adminUserStats]);
+
     const approveMessage = async (msg) => {
       const session = supabase.getSession();
       await fetch(`${SUPABASE_URL}/rest/v1/messages?id=eq.${msg.id}`, {
         method: 'PATCH',
         headers: { 'apikey': SUPABASE_ANON_KEY, 'Authorization': `Bearer ${session.access_token}`, 'Content-Type': 'application/json' },
-        body: JSON.stringify({ flagged: false })
+        body: JSON.stringify({ flagged: false, reviewed: true })
       });
-      setFlaggedMessages(prev => prev.filter(m => m.id !== msg.id));
-      showSuccess('Message restored.');
+      setAdminFlaggedMessages(prev => prev.filter(m => m.id !== msg.id));
+      setCriticalQueue(prev => prev.filter(m => m.id !== msg.id));
+      setHighQueue(prev => prev.filter(m => m.id !== msg.id));
+      setSupportQueue(prev => prev.filter(m => m.id !== msg.id));
+      showSuccess('Message restored and marked reviewed.');
     };
 
     const deleteMessage = async (msg) => {
@@ -8438,6 +8709,9 @@ Keep going! Every day counts. 💪
         headers: { 'apikey': SUPABASE_ANON_KEY, 'Authorization': `Bearer ${session.access_token}` }
       });
       setFlaggedMessages(prev => prev.filter(m => m.id !== msg.id));
+      setCriticalQueue(prev => prev.filter(m => m.id !== msg.id));
+      setHighQueue(prev => prev.filter(m => m.id !== msg.id));
+      setSupportQueue(prev => prev.filter(m => m.id !== msg.id));
       showSuccess('Message deleted.');
     };
 
@@ -8489,12 +8763,18 @@ Keep going! Every day counts. 💪
         <div className="bg-white border-b border-gray-200 px-4 py-3">
           <div className="flex gap-2">
             {[
-              { id: 'messages', label: `Flagged (${flaggedMessages.length})` },
-              { id: 'users', label: `Users (${userStats?.total ?? '...'})` },
-              { id: 'admins', label: 'Admins' }
+              { id: 'critical', label: `Critical (${criticalQueue.length})`, color: 'bg-red-600' },
+              { id: 'high', label: `High Risk (${highQueue.length})`, color: 'bg-orange-500' },
+              { id: 'support', label: `Support (${supportQueue.length})`, color: 'bg-blue-500' },
+              { id: 'users', label: `Users (${userStats?.total ?? '...'})`, color: null },
+              { id: 'admins', label: 'Admins', color: null },
             ].map(tab => (
               <button key={tab.id} onClick={() => setActiveAdminTab(tab.id)}
-                className={`px-4 py-2 rounded-lg font-semibold text-sm ${activeAdminTab === tab.id ? 'bg-gray-900 text-white' : 'bg-gray-100 text-gray-700'}`}>
+                className={`px-3 py-2 rounded-lg font-semibold text-xs whitespace-nowrap ${
+                  activeAdminTab === tab.id
+                    ? (tab.color || 'bg-gray-900') + ' text-white'
+                    : 'bg-gray-100 text-gray-700'
+                }`}>
                 {tab.label}
               </button>
             ))}
@@ -8507,7 +8787,7 @@ Keep going! Every day counts. 💪
         <div className="flex-1 p-6 overflow-y-auto">
           <div className="max-w-2xl mx-auto">
 
-            {loading && !adminUserStats && adminFlaggedMessages.length === 0 && (
+            {loading && !adminUserStats && criticalQueue.length === 0 && highQueue.length === 0 && supportQueue.length === 0 && (
               <div className="text-center py-12">
                 <div className="w-8 h-8 border-4 border-gray-200 border-t-gray-800 rounded-full animate-spin mx-auto mb-3"></div>
                 <p className="text-gray-500">Loading...</p>
@@ -8522,26 +8802,68 @@ Keep going! Every day counts. 💪
               </div>
             )}
 
-            {activeAdminTab === 'messages' && (
-              <div className="space-y-4">
-                <p className="text-sm text-gray-500">
-                  {flaggedMessages.length === 0 ? 'No flagged messages.' : `${flaggedMessages.length} awaiting review.`}
-                </p>
-                {flaggedMessages.map(msg => (
-                  <div key={msg.id} className="bg-white rounded-xl shadow-md p-5 border-l-4 border-red-400">
-                    <div className="mb-2">
-                      <p className="font-semibold text-gray-800">{msg.username}</p>
-                      <p className="text-xs text-gray-400">{formatDate(msg.created_at)} · #{msg.room}</p>
-                    </div>
-                    <p className="text-gray-700 bg-gray-50 rounded-lg p-3 mb-4 text-sm">{msg.message}</p>
-                    <div className="flex gap-2">
-                      <button onClick={() => approveMessage(msg)} className="flex-1 bg-green-500 hover:bg-green-600 text-white rounded-lg py-2 font-semibold text-sm">Restore</button>
-                      <button onClick={() => deleteMessage(msg)} className="flex-1 bg-red-500 hover:bg-red-600 text-white rounded-lg py-2 font-semibold text-sm">Delete</button>
-                    </div>
+            {/* Queue card renderer */}
+            {(['critical', 'high', 'support'].includes(activeAdminTab)) && (() => {
+              const queueMap = { critical: criticalQueue, high: highQueue, support: supportQueue };
+              const borderMap = { critical: 'border-red-400', high: 'border-orange-400', support: 'border-blue-400' };
+              const labelMap = {
+                critical: 'Auto-hidden — requires review',
+                high: 'Flagged — visible to users, needs review',
+                support: 'Support queue — user may need help'
+              };
+              const msgs = queueMap[activeAdminTab];
+              return (
+                <div className="space-y-4">
+                  <div className={`rounded-lg p-3 text-sm font-medium ${
+                    activeAdminTab === 'critical' ? 'bg-red-50 text-red-800' :
+                    activeAdminTab === 'high' ? 'bg-orange-50 text-orange-800' :
+                    'bg-blue-50 text-blue-800'
+                  }`}>
+                    {labelMap[activeAdminTab]} · {msgs.length} item{msgs.length !== 1 ? 's' : ''}
                   </div>
-                ))}
-              </div>
-            )}
+                  {msgs.length === 0 && (
+                    <p className="text-center text-gray-400 py-8">Nothing in this queue.</p>
+                  )}
+                  {msgs.map(msg => (
+                    <div key={msg.id} className={`bg-white rounded-xl shadow-md p-5 border-l-4 ${borderMap[activeAdminTab]}`}>
+                      <div className="flex items-start justify-between mb-2">
+                        <div>
+                          <p className="font-semibold text-gray-800">{msg.username}</p>
+                          <p className="text-xs text-gray-400">{formatDate(msg.created_at)} · #{msg.room}</p>
+                        </div>
+                        {msg.moderation_score && (
+                          <span className="text-xs bg-gray-100 text-gray-600 px-2 py-1 rounded-full">
+                            {msg.moderation_score}% confidence
+                          </span>
+                        )}
+                      </div>
+                      <p className="text-gray-700 bg-gray-50 rounded-lg p-3 mb-2 text-sm">{msg.message}</p>
+                      {msg.moderation_reason && (
+                        <p className="text-xs text-gray-500 mb-1">
+                          <strong>Reason:</strong> {msg.moderation_reason}
+                        </p>
+                      )}
+                      {msg.moderation_matched && (
+                        <p className="text-xs text-gray-500 mb-3">
+                          <strong>Matched:</strong> "{msg.moderation_matched}"
+                        </p>
+                      )}
+                      {activeAdminTab === 'support' ? (
+                        <div className="flex gap-2">
+                          <button onClick={() => approveMessage(msg)} className="flex-1 bg-blue-500 hover:bg-blue-600 text-white rounded-lg py-2 font-semibold text-sm">Mark Reviewed</button>
+                          <button onClick={() => deleteMessage(msg)} className="flex-1 bg-red-500 hover:bg-red-600 text-white rounded-lg py-2 font-semibold text-sm">Remove</button>
+                        </div>
+                      ) : (
+                        <div className="flex gap-2">
+                          <button onClick={() => approveMessage(msg)} className="flex-1 bg-green-500 hover:bg-green-600 text-white rounded-lg py-2 font-semibold text-sm">Restore</button>
+                          <button onClick={() => deleteMessage(msg)} className="flex-1 bg-red-500 hover:bg-red-600 text-white rounded-lg py-2 font-semibold text-sm">Delete</button>
+                        </div>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              );
+            })()}
 
             {activeAdminTab === 'users' && (
               <div className="space-y-3">
