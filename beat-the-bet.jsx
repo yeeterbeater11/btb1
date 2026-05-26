@@ -304,13 +304,16 @@ export default function BeatTheBet() {
   });
 
   const [isAdminUser, setIsAdminUser] = React.useState(false);
+  const [adminCheckDone, setAdminCheckDone] = React.useState(false);
 
-  // Check admin status against Supabase admins table on login
   const checkAdminStatus = React.useCallback(async () => {
     const session = supabase.getSession();
-    if (!session) { setIsAdminUser(false); return; }
+    if (!session) {
+      setIsAdminUser(false);
+      setAdminCheckDone(true);
+      return;
+    }
     try {
-      // Use the is_admin() database function - avoids auth.users permission issue
       const res = await fetch(
         `${SUPABASE_URL}/rest/v1/rpc/is_admin`,
         {
@@ -331,6 +334,8 @@ export default function BeatTheBet() {
       }
     } catch (e) {
       setIsAdminUser(false);
+    } finally {
+      setAdminCheckDone(true);
     }
   }, []);
 
@@ -868,18 +873,27 @@ export default function BeatTheBet() {
     localStorage.setItem('toolUsage', JSON.stringify(updated));
   };
   
-  // Check admin status on mount if already logged in
+  // Check admin status only when fully authenticated with a complete profile
+  // NOT during profile setup - would cause remount and clear the username field
   useEffect(() => {
-    if (isAuthenticated) checkAdminStatus();
-  }, [isAuthenticated]);
+    if (isAuthenticated && currentUser && currentUser.profileComplete) {
+      checkAdminStatus();
+    }
+  }, [isAuthenticated, currentUser?.profileComplete]);
 
-  // Track app open on mount
+  // Track app open on mount - use ref to avoid triggering re-renders
+  const hasTrackedOpen = React.useRef(false);
   useEffect(() => {
+    if (hasTrackedOpen.current) return;
+    hasTrackedOpen.current = true;
     const now = new Date().toISOString();
-    const updated = [...appOpenTimestamps, now];
-    setAppOpenTimestamps(updated);
+    // Update localStorage directly without setState to avoid re-renders
+    const existing = JSON.parse(localStorage.getItem('appOpenTimestamps') || '[]');
+    const updated = [...existing, now];
     localStorage.setItem('appOpenTimestamps', JSON.stringify(updated));
-  }, []); // Only run once on mount
+    // Sync state quietly
+    setAppOpenTimestamps(updated);
+  }, []);
   
   // Pattern Analysis Functions
   const analyzePatterns = () => {
@@ -1711,7 +1725,7 @@ export default function BeatTheBet() {
     if (activeTool === 'music-discovery') return <MusicDiscoveryPage />;
     if (activeTool === 'why-quitting') return <WhyImQuittingPage />;
     if (activeTool === 'settings') return <SettingsPage />;
-    if (activeTool === 'admin') return isAdmin() ? <AdminPanel /> : null;
+    if (activeTool === 'admin') return adminCheckDone ? (isAdmin() ? <AdminPanel /> : <div className='p-8 text-center text-gray-500'>Access denied.</div>) : <div className='p-8 text-center'><div className='w-8 h-8 border-4 border-gray-200 border-t-gray-800 rounded-full animate-spin mx-auto'></div></div>;
     if (activeTool === 'nearby') return <NearbyPage />;
 
     // Otherwise show the tools list
@@ -7853,6 +7867,8 @@ Keep going! Every day counts. 💪
 
       setLoading(false);
       showSuccess('Welcome to Beat the Bet!');
+      // Now safe to check admin (profile is complete, no more remount risk)
+      checkAdminStatus();
     };
 
     if (loading) {
@@ -8182,6 +8198,7 @@ Keep going! Every day counts. 💪
     const [flaggedMessages, setFlaggedMessages] = React.useState([]);
     const [userStats, setUserStats] = React.useState(null);
     const [loading, setLoading] = React.useState(true);
+    const [loadError, setLoadError] = React.useState('');
     const [newAdminEmail, setNewAdminEmail] = React.useState('');
     const [activeAdminTab, setActiveAdminTab] = React.useState('messages');
 
@@ -8194,8 +8211,12 @@ Keep going! Every day counts. 💪
       const token = session.access_token;
       const headers = { 'apikey': SUPABASE_ANON_KEY, 'Authorization': `Bearer ${token}` };
 
-      // Safety timeout - never stay loading more than 8 seconds
-      const timeout = setTimeout(() => setLoading(false), 8000);
+      setLoadError('');
+      // Safety timeout
+      const timeout = setTimeout(() => {
+        setLoading(false);
+        setLoadError('Request timed out. Check your connection and try again.');
+      }, 8000);
 
       try {
         // Flagged messages
@@ -8207,8 +8228,12 @@ Keep going! Every day counts. 💪
           const msgs = await msgRes.json();
           setFlaggedMessages(Array.isArray(msgs) ? msgs : []);
         } else {
-          console.warn('Messages fetch failed:', msgRes.status, await msgRes.text());
+          const errText = await msgRes.text();
+          console.warn('Messages fetch failed:', msgRes.status, errText);
           setFlaggedMessages([]);
+          if (msgRes.status === 403 || msgRes.status === 401) {
+            setLoadError(`Permission denied (${msgRes.status}). Make sure admin_fix.sql has been run in Supabase.`);
+          }
         }
 
         // All profiles
@@ -8218,10 +8243,8 @@ Keep going! Every day counts. 💪
         );
         if (userRes.ok) {
           const users = await userRes.json();
-          const safeUsers = Array.isArray(users) ? users : [];
-          setUserStats({ total: safeUsers.length, users: safeUsers });
+          setUserStats({ total: Array.isArray(users) ? users.length : 0, users: Array.isArray(users) ? users : [] });
         } else {
-          console.warn('Profiles fetch failed:', userRes.status, await userRes.text());
           setUserStats({ total: 0, users: [] });
         }
 
@@ -8233,13 +8256,13 @@ Keep going! Every day counts. 💪
         if (adminRes.ok) {
           const admins = await adminRes.json();
           if (Array.isArray(admins)) {
-            const emails = admins.map(a => a.email);
-            setAdminEmails(emails);
-            localStorage.setItem('adminEmails', JSON.stringify(emails));
+            setAdminEmails(admins.map(a => a.email));
+            localStorage.setItem('adminEmails', JSON.stringify(admins.map(a => a.email)));
           }
         }
       } catch (e) {
         console.error('Admin load error:', e);
+        setLoadError(`Error: ${e.message}`);
         setFlaggedMessages([]);
         setUserStats({ total: 0, users: [] });
       } finally {
@@ -8356,7 +8379,19 @@ Keep going! Every day counts. 💪
         </div>
         <div className="flex-1 p-6 overflow-y-auto">
           <div className="max-w-2xl mx-auto">
-            {loading && <div className="text-center py-12"><div className="w-8 h-8 border-4 border-gray-200 border-t-gray-800 rounded-full animate-spin mx-auto mb-3"></div><p className="text-gray-500">Loading...</p></div>}
+            {loading && (
+              <div className="text-center py-12">
+                <div className="w-8 h-8 border-4 border-gray-200 border-t-gray-800 rounded-full animate-spin mx-auto mb-3"></div>
+                <p className="text-gray-500">Loading...</p>
+              </div>
+            )}
+            {!loading && loadError && (
+              <div className="bg-red-50 border-l-4 border-red-500 rounded-lg p-4 mb-4">
+                <p className="font-semibold text-red-800 mb-1">Could not load admin data</p>
+                <p className="text-sm text-red-700">{loadError}</p>
+                <button onClick={loadAdminData} className="mt-3 bg-red-500 text-white px-4 py-2 rounded-lg text-sm font-semibold">Retry</button>
+              </div>
+            )}
             {!loading && activeAdminTab === 'messages' && (
               <div className="space-y-4">
                 <p className="text-sm text-gray-500">{flaggedMessages.length === 0 ? 'No flagged messages.' : `${flaggedMessages.length} awaiting review.`}</p>
