@@ -8523,7 +8523,7 @@ Keep going! Every day counts. 💪
         </div>
       </div>
     );
-  };
+  });
 
   // Show auth screens if not authenticated
   if (!isAuthenticated) {
