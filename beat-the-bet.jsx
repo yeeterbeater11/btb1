@@ -74,7 +74,7 @@ const supabase = {
 /**
  * REMINDER FOR FUTURE DEVELOPMENT:
  * 
- * Savings Calculator "What You're Building Toward" needs messaging refinement.
+ * Savings Calculator "What You're Protecting" — liabilities and goals tracker.
  * Current approach shows unlockable items (coffee, lunches, gadgets) as rewards.
  * 
  * ISSUE: This could promote spending instead of saving, which contradicts financial recovery goals.
@@ -1476,11 +1476,11 @@ export default function BeatTheBet() {
                   </div>
                   <div className="flex-1">
                     <div className="flex items-center justify-between">
-                      <h3 className="font-bold text-lg text-gray-800 mb-1">What You're Building Toward</h3>
+                      <h3 className="font-bold text-lg text-gray-800 mb-1">What You're Protecting</h3>
                       <ChevronRight className="w-5 h-5 text-gray-400" />
                     </div>
                     <p className="text-gray-600 text-sm">
-                      See what staying clean gives you back
+                      Your bills, debts, and savings goals
                     </p>
                   </div>
                 </div>
@@ -2445,214 +2445,6 @@ export default function BeatTheBet() {
     </div>
   );
 
-  // Savings Goals Component
-  const SavingsGoalsSection = ({ savingsGoals, setSavingsGoals, dailyGamblingSpend, daysClean }) => {
-    const [showAddGoal, setShowAddGoal] = useState(false);
-    const [newGoal, setNewGoal] = useState({ name: '', amount: '', icon: '🏠' });
-
-    const goalIcons = ['🏠', '🚗', '✈️', '💍', '🎓', '💰', '🎯', '🎉', '🛒', '🏖️'];
-
-    const addGoal = () => {
-      if (!newGoal.name.trim() || !newGoal.amount) return;
-      
-      const goal = {
-        id: Date.now(),
-        name: newGoal.name.trim(),
-        amount: parseFloat(newGoal.amount),
-        icon: newGoal.icon,
-        timestamp: new Date().toISOString()
-      };
-      
-      const updated = [...savingsGoals, goal];
-      setSavingsGoals(updated);
-      localStorage.setItem('savingsGoals', JSON.stringify(updated));
-      setNewGoal({ name: '', amount: '', icon: '🏠' });
-      setShowAddGoal(false);
-      showSuccess(`Goal created: ${goal.icon} ${goal.name}!`);
-    };
-
-    const deleteGoal = (id) => {
-      const updated = savingsGoals.filter(g => g.id !== id);
-      setSavingsGoals(updated);
-      localStorage.setItem('savingsGoals', JSON.stringify(updated));
-    };
-
-    const totalSaved = (dailyGamblingSpend * daysClean).toFixed(0);
-
-    const calculateProgress = (goalAmount) => {
-      return Math.min((totalSaved / goalAmount) * 100, 100);
-    };
-
-    const calculateDaysNeeded = (goalAmount) => {
-      if (dailyGamblingSpend === 0) return null;
-      const remaining = Math.max(0, goalAmount - totalSaved);
-      return Math.ceil(remaining / dailyGamblingSpend);
-    };
-
-    return (
-      <div className="bg-white rounded-xl shadow-md p-6">
-        <div className="flex items-center justify-between mb-4">
-          <h3 className="font-bold text-gray-800">Savings Goals</h3>
-          <button
-            onClick={() => setShowAddGoal(!showAddGoal)}
-            className="text-blue-600 hover:text-blue-700 font-semibold text-sm"
-          >
-            {showAddGoal ? 'Cancel' : '+ Add Goal'}
-          </button>
-        </div>
-
-        {showAddGoal && (
-          <div className="bg-blue-50 border-2 border-blue-200 rounded-xl p-4 mb-4" onClick={(e) => e.stopPropagation()}>
-            <h4 className="font-semibold text-gray-800 mb-3">Create New Goal</h4>
-            
-            {/* Icon Selector */}
-            <div className="mb-3">
-              <label className="block text-sm font-semibold text-gray-700 mb-2">Icon</label>
-              <div className="flex gap-2 flex-wrap">
-                {goalIcons.map(icon => (
-                  <button
-                    key={icon}
-                    onClick={() => setNewGoal({ ...newGoal, icon })}
-                    className={`text-3xl p-2 rounded-lg transition-all ${
-                      newGoal.icon === icon 
-                        ? 'bg-blue-500 scale-110' 
-                        : 'bg-white hover:bg-blue-100'
-                    }`}
-                  >
-                    {icon}
-                  </button>
-                ))}
-              </div>
-            </div>
-
-            {/* Goal Name */}
-            <div className="mb-3">
-              <label className="block text-sm font-semibold text-gray-700 mb-2">Goal Name</label>
-              <input
-                type="text"
-                value={newGoal.name}
-                onChange={(e) => setNewGoal({ ...newGoal, name: e.target.value })}
-                placeholder="e.g., House deposit, New car, Holiday..."
-                className="w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
-              />
-            </div>
-
-            {/* Goal Amount */}
-            <div className="mb-3">
-              <label className="block text-sm font-semibold text-gray-700 mb-2">Target Amount ($)</label>
-              <input
-                type="number"
-                value={newGoal.amount}
-                onChange={(e) => setNewGoal({ ...newGoal, amount: e.target.value })}
-                placeholder="10000"
-                min="0"
-                step="100"
-                className="w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
-              />
-            </div>
-
-            <button
-              onClick={addGoal}
-              disabled={!newGoal.name.trim() || !newGoal.amount}
-              className="w-full bg-blue-500 hover:bg-blue-600 disabled:bg-gray-300 text-white rounded-lg py-3 font-bold transition-colors"
-            >
-              Create Goal
-            </button>
-          </div>
-        )}
-
-        {savingsGoals.length === 0 && !showAddGoal ? (
-          <div className="text-center py-8">
-            <span className="text-6xl block mb-3">🎯</span>
-            <p className="text-gray-600 mb-2">No savings goals yet</p>
-            <p className="text-sm text-gray-500">
-              Set a goal to see your progress and stay motivated!
-            </p>
-          </div>
-        ) : (
-          <div className="space-y-4">
-            {savingsGoals.map(goal => {
-              const progress = calculateProgress(goal.amount);
-              const daysNeeded = calculateDaysNeeded(goal.amount);
-              const isComplete = progress >= 100;
-
-              return (
-                <div 
-                  key={goal.id}
-                  className={`border-2 rounded-xl p-4 ${
-                    isComplete 
-                      ? 'bg-gradient-to-br from-green-50 to-emerald-50 border-green-300' 
-                      : 'bg-gray-50 border-gray-200'
-                  }`}
-                >
-                  <div className="flex items-start justify-between mb-3">
-                    <div className="flex items-center gap-3">
-                      <span className="text-4xl">{goal.icon}</span>
-                      <div>
-                        <h4 className="font-bold text-gray-900">{goal.name}</h4>
-                        <p className="text-sm text-gray-600">
-                          ${parseFloat(totalSaved).toLocaleString()} / ${parseFloat(goal.amount).toLocaleString()}
-                        </p>
-                      </div>
-                    </div>
-                    <button
-                      onClick={() => deleteGoal(goal.id)}
-                      className="text-red-500 hover:text-red-700"
-                    >
-                      <X className="w-5 h-5" />
-                    </button>
-                  </div>
-
-                  {/* Progress Bar */}
-                  <div className="mb-3">
-                    <div className="w-full bg-gray-200 rounded-full h-4 overflow-hidden">
-                      <div 
-                        className={`h-4 rounded-full transition-all duration-500 ${
-                          isComplete ? 'bg-gradient-to-r from-green-500 to-emerald-500' : 'bg-gradient-to-r from-blue-500 to-purple-500'
-                        }`}
-                        style={{ width: `${progress}%` }}
-                      />
-                    </div>
-                    <div className="flex justify-between items-center mt-1">
-                      <span className="text-xs font-semibold text-gray-700">
-                        {progress.toFixed(1)}% Complete
-                      </span>
-                      {isComplete && (
-                        <span className="text-xs font-bold text-green-600">🎉 Goal Reached!</span>
-                      )}
-                    </div>
-                  </div>
-
-                  {/* Days Needed */}
-                  {!isComplete && daysNeeded !== null && (
-                    <div className="bg-white bg-opacity-50 rounded-lg p-3">
-                      <p className="text-sm text-gray-700">
-                        {daysNeeded === 0 ? (
-                          <span className="font-semibold text-green-600">You can afford this now! 🎉</span>
-                        ) : (
-                          <>
-                            <strong>{daysNeeded} more day{daysNeeded !== 1 ? 's' : ''}</strong> clean and you'll have saved enough!
-                          </>
-                        )}
-                      </p>
-                    </div>
-                  )}
-                </div>
-              );
-            })}
-          </div>
-        )}
-
-        {dailyGamblingSpend === 0 && savingsGoals.length > 0 && (
-          <div className="bg-yellow-50 border-l-4 border-yellow-500 p-3 rounded mt-4">
-            <p className="text-xs text-gray-700">
-              💡 Set your daily gambling spend above to see how many days until you reach your goals
-            </p>
-          </div>
-        )}
-      </div>
-    );
-  };
 
   // Payday Tracking Component
   const PaydayTrackingSection = ({ paydaySettings, setPaydaySettings }) => {
@@ -2880,16 +2672,6 @@ export default function BeatTheBet() {
   const SavingsCalculatorPage = React.memo(() => {
     // Use ref for input value to persist across re-renders
     const dailySpendInputRef = React.useRef(null);
-    const [newLiability, setNewLiability] = useState({ name: '', amount: '' });
-    const [savingsGoal, setSavingsGoal] = useState(() => {
-      const saved = localStorage.getItem('savingsGoal');
-      return saved ? JSON.parse(saved) : null;
-    });
-    const [showGoalForm, setShowGoalForm] = useState(false);
-    const [newGoal, setNewGoal] = useState({ name: '', amount: '' });
-    
-    // Local state for city input to prevent re-renders while typing
-    const [localCity, setLocalCity] = useState(userCity);
 
     const handleSaveDailySpend = () => {
       if (dailySpendInputRef.current) {
@@ -2899,48 +2681,20 @@ export default function BeatTheBet() {
       }
     };
 
-    const addLiability = () => {
-      if (newLiability.name && newLiability.amount) {
-        const updated = [...userLiabilities, { 
-          id: Date.now(), 
-          name: newLiability.name, 
-          amount: parseFloat(newLiability.amount) 
-        }];
-        setUserLiabilities(updated);
-        localStorage.setItem('userLiabilities', JSON.stringify(updated));
-        setNewLiability({ name: '', amount: '' });
-        setShowLiabilityForm(false);
-      }
-    };
-
-    const removeLiability = (id) => {
-      const updated = userLiabilities.filter(l => l.id !== id);
-      setUserLiabilities(updated);
-      localStorage.setItem('userLiabilities', JSON.stringify(updated));
-    };
-
     const calculateSavings = (days) => {
       return (dailyGamblingSpend * days).toFixed(0);
-    };
-
-    const calculateDaysForLiability = (amount) => {
-      if (dailyGamblingSpend === 0) return 0;
-      return Math.ceil(amount / dailyGamblingSpend);
     };
 
     // Memoize savings examples to prevent recalculation on every render
     // Default milestones — user can edit, delete, and add their own
     const defaultMilestones = [
-      { id: 1, label: 'One week of groceries', amount: 150, category: 'essentials', description: "A full week of food on the table." },
-      { id: 2, label: 'Phone bill (one month)', amount: 60, category: 'bills', description: "Your phone bill covered without stress." },
-      { id: 3, label: 'Electricity bill', amount: 300, category: 'bills', description: "A full power bill paid — one less thing to worry about." },
-      { id: 4, label: 'Internet (one month)', amount: 80, category: 'bills', description: "Connected without it costing you sleep." },
-      { id: 5, label: 'Emergency fund started', amount: 500, category: 'savings', description: "Your first real safety net." },
-      { id: 6, label: 'Car registration', amount: 900, category: 'bills', description: "Rego paid without scrambling." },
-      { id: 7, label: 'Emergency fund solid', amount: 1000, category: 'savings', description: "$1,000 sitting there — car repairs, medical bills, handled." },
-      { id: 8, label: 'Pay off debt ($2,000)', amount: 2000, category: 'debt', description: "$2,000 of debt gone. Interest you'll never pay." },
-      { id: 9, label: 'Six-month emergency fund', amount: 5000, category: 'savings', description: "Six months covered. Life stops feeling precarious." },
-      { id: 10, label: 'House deposit contribution', amount: 10000, category: 'future', description: "$10,000 toward a deposit. Real progress." },
+      { id: 1, label: 'Phone bill', amount: 60, category: 'bills', description: "Monthly phone bill." },
+      { id: 2, label: 'Electricity bill', amount: 300, category: 'bills', description: "Quarterly electricity bill." },
+      { id: 3, label: 'Internet bill', amount: 80, category: 'bills', description: "Monthly internet bill." },
+      { id: 4, label: 'Car registration', amount: 900, category: 'bills', description: "Annual rego." },
+      { id: 5, label: 'Credit card debt', amount: 2000, category: 'debt', description: "Credit card balance." },
+      { id: 6, label: 'Personal loan', amount: 5000, category: 'debt', description: "Personal loan balance." },
+      { id: 7, label: 'Emergency fund', amount: 1000, category: 'savings', description: "Emergency savings buffer." },
     ];
 
     const [milestones, setMilestones] = React.useState(() => {
@@ -3021,8 +2775,8 @@ export default function BeatTheBet() {
               <DollarSign className="w-8 h-8" />
             </div>
             <div>
-              <h1 className="text-2xl font-bold">What You're Building Toward</h1>
-              <p className="text-sm opacity-90">See what staying clean gives you back</p>
+              <h1 className="text-2xl font-bold">What You're Protecting</h1>
+              <p className="text-sm opacity-90">Your bills, debts, and goals</p>
             </div>
           </div>
         </div>
@@ -3031,112 +2785,15 @@ export default function BeatTheBet() {
           <div className="max-w-md mx-auto space-y-6">
 
 
-            {/* Set Daily Spend */}
-            <div className="bg-white rounded-xl shadow-md p-6">
-              <h3 className="font-bold text-gray-800 mb-2">How much did you spend daily?</h3>
-              <p className="text-sm text-gray-600 mb-4">Just an estimate - this is for you, not judgment</p>
-              <div className="flex items-center gap-2 mb-4">
-                <span className="text-2xl font-bold text-gray-600 flex-shrink-0">$</span>
-                <input
-                  ref={dailySpendInputRef}
-                  type="number"
-                  defaultValue={dailyGamblingSpend || ''}
-                  placeholder="0"
-                  className="w-32 text-3xl font-bold p-2 border-2 border-gray-300 rounded-lg focus:ring-2 focus:ring-green-500 focus:border-transparent text-center"
-                />
-                <span className="text-gray-600 flex-shrink-0">/ day</span>
-              </div>
-              <button
-                onClick={handleSaveDailySpend}
-                className="w-full bg-green-500 hover:bg-green-600 text-white rounded-lg py-3 font-bold transition-colors"
-              >
-                Calculate
-              </button>
+            {/* Intro */}
+            <div className="bg-blue-50 border-l-4 border-blue-500 rounded-lg p-4">
+              <p className="text-sm text-gray-700">Add your real bills and debts. This page is a reminder of what staying clean actually protects — not imaginary savings, but the real things you need to pay.</p>
             </div>
 
-            {dailyGamblingSpend > 0 && (
-              <>
-                {/* Current Savings - The Win */}
-                <div className="bg-gradient-to-br from-green-500 to-blue-500 rounded-xl shadow-lg p-6 text-white">
-                  <h3 className="text-sm opacity-90 mb-2">Money Not Gambled</h3>
-                  <p className="text-5xl font-bold mb-1">${calculateSavings(getDaysClean())}</p>
-                  <p className="text-sm opacity-90">{getDaysClean()} {getDaysClean() === 1 ? 'day' : 'days'} gamble-free</p>
-                </div>
-
-                {/* Liabilities Tracker */}
-                <div className="bg-white rounded-xl shadow-md p-6">
-                  <div className="flex items-center justify-between mb-4">
-                    <h3 className="font-bold text-gray-800">My Liabilities (Optional)</h3>
-                    <button
-                      onClick={() => setShowLiabilityForm(!showLiabilityForm)}
-                      className="text-blue-600 hover:text-blue-700 font-semibold text-sm"
-                    >
-                      {showLiabilityForm ? 'Cancel' : '+ Add'}
-                    </button>
-                  </div>
-
-                  {showLiabilityForm && (
-                    <div className="space-y-3 mb-4 p-4 bg-gray-50 rounded-lg" onClick={(e) => e.stopPropagation()}>
-                      <input
-                        type="text"
-                        value={newLiability.name}
-                        onChange={(e) => setNewLiability({...newLiability, name: e.target.value})}
-                        placeholder="e.g., Car loan, Credit card"
-                        className="w-full p-2 border border-gray-300 rounded-lg"
-                      />
-                      <div className="flex gap-2">
-                        <div className="flex-1">
-                          <input
-                            type="number"
-                            value={newLiability.amount}
-                            onChange={(e) => setNewLiability({...newLiability, amount: e.target.value})}
-                            placeholder="Monthly payment"
-                            className="w-full p-2 border border-gray-300 rounded-lg"
-                          />
-                        </div>
-                        <button
-                          onClick={addLiability}
-                          className="bg-blue-500 hover:bg-blue-600 text-white px-4 rounded-lg font-semibold"
-                        >
-                          Add
-                        </button>
-                      </div>
-                    </div>
-                  )}
-
-                  {userLiabilities.length > 0 ? (
-                    <div className="space-y-3">
-                      {userLiabilities.map((liability) => {
-                        const daysNeeded = calculateDaysForLiability(liability.amount);
-                        return (
-                          <div key={liability.id} className="flex items-center justify-between p-3 bg-gray-50 rounded-lg">
-                            <div>
-                              <p className="font-semibold text-gray-800">{liability.name}</p>
-                              <p className="text-xs text-gray-500">
-                                {daysNeeded} days clean = 1 payment (${liability.amount})
-                              </p>
-                            </div>
-                            <button
-                              onClick={() => removeLiability(liability.id)}
-                              className="text-red-500 hover:text-red-600 text-sm font-semibold"
-                            >
-                              Remove
-                            </button>
-                          </div>
-                        );
-                      })}
-                    </div>
-                  ) : (
-                    <p className="text-sm text-gray-500 text-center py-3">
-                      Track your loan repayments to see progress
-                    </p>
-                  )}
-                </div>
-
-                {/* Savings Milestones */}
+                {/* My Liabilities */}
                 <div className="bg-white rounded-xl shadow-md p-6" onClick={(e) => e.stopPropagation()}>
                   <div className="flex items-center justify-between mb-1">
-                    <h3 className="font-bold text-gray-800">Your savings milestones</h3>
+                    <h3 className="font-bold text-gray-800">My Liabilities</h3>
                     <button
                       onClick={() => setShowAddMilestone(!showAddMilestone)}
                       className="text-blue-600 hover:text-blue-700 font-semibold text-sm"
@@ -3144,18 +2801,18 @@ export default function BeatTheBet() {
                       {showAddMilestone ? 'Cancel' : '+ Add'}
                     </button>
                   </div>
-                  <p className="text-sm text-gray-500 mb-4">Edit or remove any milestone, and add your own — phone bill, car loan, anything that matters to you.</p>
+                  <p className="text-sm text-gray-500 mb-4">Add your actual bills, debts, and savings goals. The amounts are yours — update them to match your real situation.</p>
 
-                  {/* Add milestone form */}
+                  {/* Add liability form */}
                   {showAddMilestone && (
                     <div className="bg-blue-50 border-2 border-blue-200 rounded-xl p-4 mb-4" onClick={(e) => e.stopPropagation()}>
-                      <h4 className="font-semibold text-gray-800 mb-3">Add a milestone</h4>
+                      <h4 className="font-semibold text-gray-800 mb-3">Add a liability or goal</h4>
                       <div className="space-y-3">
                         <input
                           type="text"
                           value={newLabel}
                           onChange={(e) => setNewLabel(e.target.value)}
-                          placeholder="e.g. Telstra bill, Car loan payment..."
+                          placeholder="e.g. Telstra bill, Car loan, Credit card..."
                           className="w-full p-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent text-sm"
                         />
                         <div className="flex gap-2">
@@ -3183,7 +2840,7 @@ export default function BeatTheBet() {
                           disabled={!newLabel.trim() || !newAmount}
                           className="w-full bg-blue-500 hover:bg-blue-600 disabled:bg-gray-300 text-white rounded-lg py-2.5 font-semibold text-sm transition-colors"
                         >
-                          Add Milestone
+                          Add
                         </button>
                       </div>
                     </div>
@@ -3274,7 +2931,7 @@ export default function BeatTheBet() {
                     })}
                     {milestones.length === 0 && (
                       <div className="text-center py-6">
-                        <p className="text-gray-500 text-sm mb-2">No milestones yet.</p>
+                        <p className="text-gray-500 text-sm mb-2">No liabilities added yet.</p>
                         <button onClick={() => setShowAddMilestone(true)} className="text-blue-600 font-semibold text-sm">Add your first one</button>
                       </div>
                     )}
@@ -3282,7 +2939,7 @@ export default function BeatTheBet() {
 
                   {milestones.length > 0 && (
                     <button
-                      onClick={() => { if (window.confirm('Reset milestones to defaults?')) { saveMilestones(defaultMilestones); } }}
+                      onClick={() => { if (window.confirm('Reset to default liabilities?')) { saveMilestones(defaultMilestones); } }}
                       className="mt-4 text-xs text-gray-400 hover:text-gray-600 w-full text-center"
                     >
                       Reset to defaults
@@ -3308,31 +2965,13 @@ export default function BeatTheBet() {
                     {' '}It's never too late to turn this around.
                   </p>
                 </div>
-              </>
-            )}
-
-            {dailyGamblingSpend === 0 && (
-              <div className="bg-blue-50 border-l-4 border-blue-500 rounded-lg p-5">
-                <p className="text-sm text-gray-700 leading-relaxed">
-                  Enter your daily gambling spend above to see what staying clean gives you back. 
-                  This is just for you - no judgment, no tracking. Just hope.
-                </p>
-              </div>
-            )}
-
             {/* Payday Tracking */}
             <PaydayTrackingSection 
               paydaySettings={paydaySettings}
               setPaydaySettings={setPaydaySettings}
             />
 
-            {/* Savings Goals */}
-            <SavingsGoalsSection 
-              savingsGoals={savingsGoals}
-              setSavingsGoals={setSavingsGoals}
-              dailyGamblingSpend={dailyGamblingSpend}
-              daysClean={getDaysClean()}
-            />
+
           </div>
         </div>
       </div>
@@ -6205,7 +5844,7 @@ export default function BeatTheBet() {
                 {/* Money Saved */}
                 {dailyGamblingSpend > 0 && (
                   <div className="bg-gradient-to-br from-green-500 to-emerald-600 rounded-xl shadow-lg p-6 text-white">
-                    <p className="text-sm opacity-90 mb-2">Total Money Not Gambled</p>
+                    <p className="text-sm opacity-90 mb-2">Days Gamble-Free</p>
                     <p className="text-5xl font-bold mb-1">${(dailyGamblingSpend * currentStreak).toLocaleString()}</p>
                     <p className="text-sm opacity-90">in {currentStreak} days</p>
                   </div>
