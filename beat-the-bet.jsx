@@ -311,11 +311,17 @@ export default function BeatTheBet() {
     return saved ? JSON.parse(saved) : ['beatthebetadmin@gmail.com'];
   });
 
+  const adminLoadingRef = React.useRef(false);
   const loadAdminData = React.useCallback(async () => {
+    if (adminLoadingRef.current) {
+      console.log('[Admin] loadAdminData already running, skipping');
+      return;
+    }
+    adminLoadingRef.current = true;
     setAdminLoading(true);
     setAdminLoadError('');
     const session = supabase.getSession();
-    if (!session) { setAdminLoading(false); return; }
+    if (!session) { adminLoadingRef.current = false; setAdminLoading(false); return; }
     const headers = {
       'apikey': SUPABASE_ANON_KEY,
       'Authorization': `Bearer ${session.access_token}`
@@ -362,6 +368,7 @@ export default function BeatTheBet() {
     } catch (e) {
       setAdminLoadError(e.message);
     } finally {
+      adminLoadingRef.current = false;
       setAdminLoading(false);
     }
   }, []);
@@ -5581,7 +5588,7 @@ export default function BeatTheBet() {
         </div>
       </div>
     );
-  };
+  });
 
   const MindfulnessPage = () => (
     <div className="flex flex-col min-h-screen bg-gray-50 pb-20">
@@ -8302,7 +8309,7 @@ Keep going! Every day counts. 💪
 
 
 
-  const AdminPanel = () => {
+  const AdminPanel = React.memo(() => {
     const [newAdminEmail, setNewAdminEmail] = React.useState('');
     const [activeAdminTab, setActiveAdminTab] = React.useState('messages');
 
@@ -8314,11 +8321,11 @@ Keep going! Every day counts. 💪
     const setFlaggedMessages = setAdminFlaggedMessages;
 
     React.useEffect(() => {
-      // Only load if we don't already have data
-      if (!adminUserStats && !adminLoading) {
+      // Only load if we don't already have data and not currently loading
+      if (!adminUserStats && !adminLoadingRef.current) {
         loadAdminData();
       }
-    }, []);
+    }, []); // Empty deps - only run on mount
 
     const approveMessage = async (msg) => {
       const session = supabase.getSession();
@@ -8407,7 +8414,7 @@ Keep going! Every day counts. 💪
         <div className="flex-1 p-6 overflow-y-auto">
           <div className="max-w-2xl mx-auto">
 
-            {loading && !userStats && flaggedMessages.length === 0 && (
+            {loading && !adminUserStats && adminFlaggedMessages.length === 0 && (
               <div className="text-center py-12">
                 <div className="w-8 h-8 border-4 border-gray-200 border-t-gray-800 rounded-full animate-spin mx-auto mb-3"></div>
                 <p className="text-gray-500">Loading...</p>
