@@ -460,6 +460,17 @@ export default function BeatTheBet() {
   });
 
   // Timer State
+  // Track whether profile data has been loaded from Supabase
+  // Prevents timer from showing wrong value before login restores the correct date
+  const [profileLoaded, setProfileLoaded] = React.useState(() => {
+    // If we have a saved startDate in localStorage, the data is already present
+    const hasSavedDate = !!(localStorage.getItem('startDate') || localStorage.getItem('gambleFreeStartDate'));
+    const isAuth = localStorage.getItem('isAuthenticated') === 'true';
+    // Profile is "loaded" if not authenticated (nothing to load)
+    // or if we have saved data from a previous session
+    return !isAuth || hasSavedDate;
+  });
+
   const [startDate, setStartDate] = useState(() => {
     const saved = localStorage.getItem('startDate') || localStorage.getItem('gambleFreeStartDate');
     return saved ? new Date(saved) : new Date();
@@ -834,6 +845,7 @@ export default function BeatTheBet() {
 
     setCurrentUser(user);
     setIsAuthenticated(true);
+    setProfileLoaded(true);
     localStorage.setItem('isAuthenticated', 'true');
     localStorage.setItem('currentUser', JSON.stringify(user));
 
@@ -961,16 +973,22 @@ export default function BeatTheBet() {
     if (!session) return;
     const uid = session.user.id;
 
-    await supabase.from('profiles').upsert({
+    // Build the upsert object - only include start_date if explicitly provided
+    // to prevent overwriting the correct DB value with a default localStorage value
+    const upsertData = {
       id: uid,
       username: overrides.username ?? username,
       age_range: overrides.age_range ?? userAgeRange,
-      start_date: overrides.start_date ?? startDate,
       daily_gambling_spend: overrides.daily_gambling_spend ?? dailyGamblingSpend,
       points: overrides.points ?? points,
       level: overrides.level ?? level,
       updated_at: new Date().toISOString()
-    });
+    };
+    // Only write start_date if explicitly passed - never use default state value
+    if (overrides.start_date !== undefined) {
+      upsertData.start_date = overrides.start_date;
+    }
+    await supabase.from('profiles').upsert(upsertData);
   };
 
   const syncJournalEntry = async (entry) => {
@@ -1399,7 +1417,11 @@ export default function BeatTheBet() {
           <div className="bg-gradient-to-br from-blue-600 via-purple-600 to-pink-600 rounded-2xl shadow-2xl p-8 text-white">
             <div className="text-center">
               <p className="text-sm font-semibold opacity-90 mb-2 uppercase tracking-wide">Time Gamble-Free</p>
-              <TimerDisplay startDate={startDate} />
+              {!profileLoaded && isAuthenticated ? (
+                <div className="text-4xl font-bold text-white mb-2 opacity-50">Loading...</div>
+              ) : (
+                <TimerDisplay startDate={startDate} />
+              )}
               <div className="mt-6 flex items-center justify-center gap-4">
                 <div className="bg-white bg-opacity-20 backdrop-blur-sm rounded-xl px-4 py-2">
                   <p className="text-xs opacity-75 mb-0.5">Clean Days</p>
