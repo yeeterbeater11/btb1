@@ -921,7 +921,23 @@ export default function BeatTheBet() {
           if (Array.isArray(rows) && rows.length > 0 && Array.isArray(rows[0].items) && rows[0].items.length > 0) {
             localStorage.setItem('savingsMilestones', JSON.stringify(rows[0].items));
           }
-        }).catch(() => {})
+        }).catch(() => {}),
+
+      // User settings
+      fetch(`${SUPABASE_URL}/rest/v1/user_settings?user_id=eq.${uid}&limit=1`, { headers })
+        .then(r => r.json()).then(rows => {
+          if (!Array.isArray(rows) || rows.length === 0) return;
+          const s = rows[0];
+          if (s.journal_mode) { setJournalMode(s.journal_mode); localStorage.setItem('journalMode', s.journal_mode); }
+          if (s.daily_gambling_spend) { setDailyGamblingSpend(parseFloat(s.daily_gambling_spend)); localStorage.setItem('dailyGamblingSpend', String(s.daily_gambling_spend)); }
+          if (s.selected_interests?.length) { setSelectedInterests(s.selected_interests); localStorage.setItem('selectedInterests', JSON.stringify(s.selected_interests)); }
+          if (s.payday_settings) { setPaydaySettings(s.payday_settings); localStorage.setItem('paydaySettings', JSON.stringify(s.payday_settings)); }
+          if (s.last_check_in) { setLastCheckIn(s.last_check_in); localStorage.setItem('lastCheckIn', s.last_check_in); }
+          if (s.seed_artists?.length) { setSeedArtists(s.seed_artists); localStorage.setItem('seedArtists', JSON.stringify(s.seed_artists)); }
+          if (s.artist_feedback && Object.keys(s.artist_feedback).length) { setArtistFeedback(s.artist_feedback); localStorage.setItem('artistFeedback', JSON.stringify(s.artist_feedback)); }
+          if (s.favorite_artists?.length) { setFavoriteArtists(s.favorite_artists); localStorage.setItem('favoriteArtists', JSON.stringify(s.favorite_artists)); }
+          if (s.daily_step_goal) { setDailyStepGoal(parseInt(s.daily_step_goal)); localStorage.setItem('dailyStepGoal', String(s.daily_step_goal)); }
+        }).catch(() => {}),
 
     ]).then(() => {
       console.log('Data restore complete');
@@ -948,6 +964,21 @@ export default function BeatTheBet() {
       profileComplete: false
     };
 
+    // Clear any stale data from previous sessions/accounts
+    const keysToReset = [
+      'startDate','gambleFreeStartDate','userPoints','userLevel',
+      'earnedBadges','journalEntries','activityLog','whyImQuitting',
+      'savingsMilestones','paydaySettings','selectedInterests',
+      'seedArtists','artistFeedback','favoriteArtists','savedForLater',
+      'dailyGamblingSpend','lastCheckIn','journalMode','chatUsername',
+      'hasCompletedOnboarding','username','userAgeRange','userCity'
+    ];
+    keysToReset.forEach(k => localStorage.removeItem(k));
+    const now = new Date();
+    setStartDate(now);
+    setProfileLoaded(true);
+    localStorage.setItem('startDate', now.toISOString());
+
     setCurrentUser(user);
     setIsAuthenticated(true);
     localStorage.setItem('isAuthenticated', 'true');
@@ -964,6 +995,42 @@ export default function BeatTheBet() {
     localStorage.removeItem('sb_session');
     setAuthScreen('welcome');
   };
+
+  // ============================================================
+  // Sync ALL user settings to Supabase user_settings table
+  // ============================================================
+  const syncSettingsToSupabase = React.useCallback(async (overrides = {}) => {
+    const session = supabase.getSession();
+    if (!session) return;
+    const uid = session.user.id;
+    const token = session.access_token;
+    const payload = {
+      user_id: uid,
+      journal_mode: overrides.journal_mode ?? journalMode,
+      daily_gambling_spend: overrides.daily_gambling_spend ?? dailyGamblingSpend,
+      selected_interests: overrides.selected_interests ?? selectedInterests,
+      payday_settings: overrides.payday_settings ?? paydaySettings,
+      last_check_in: overrides.last_check_in ?? lastCheckIn,
+      seed_artists: overrides.seed_artists ?? seedArtists,
+      artist_feedback: overrides.artist_feedback ?? artistFeedback,
+      favorite_artists: overrides.favorite_artists ?? favoriteArtists,
+      daily_step_goal: overrides.daily_step_goal ?? dailyStepGoal,
+      updated_at: new Date().toISOString()
+    };
+    try {
+      await fetch(`${SUPABASE_URL}/rest/v1/user_settings`, {
+        method: 'POST',
+        headers: {
+          'apikey': SUPABASE_ANON_KEY,
+          'Authorization': `Bearer ${token}`,
+          'Content-Type': 'application/json',
+          'Prefer': 'resolution=merge-duplicates'
+        },
+        body: JSON.stringify(payload)
+      });
+    } catch (e) {}
+  }, [journalMode, dailyGamblingSpend, selectedInterests, paydaySettings,
+      lastCheckIn, seedArtists, artistFeedback, favoriteArtists, dailyStepGoal]);
 
   // ============================================================
   // Sync data to Supabase (called after profile setup and on key changes)
@@ -1296,6 +1363,7 @@ export default function BeatTheBet() {
       addPoints(10, 'Daily check-in');
       setLastCheckIn(today);
       localStorage.setItem('lastCheckIn', today);
+      syncSettingsToSupabase({ last_check_in: today }).catch(() => {});
       return true;
     }
     return false;
@@ -3010,6 +3078,7 @@ export default function BeatTheBet() {
       
       setPaydaySettings(settings);
       localStorage.setItem('paydaySettings', JSON.stringify(settings));
+      syncSettingsToSupabase({ payday_settings: settings }).catch(() => {});
       setShowCalendar(false);
     };
 
@@ -3223,6 +3292,7 @@ export default function BeatTheBet() {
         const amount = parseFloat(dailySpendInputRef.current.value) || 0;
         setDailyGamblingSpend(amount);
         localStorage.setItem('dailyGamblingSpend', amount.toString());
+        syncSettingsToSupabase({ daily_gambling_spend: amount }).catch(() => {});
       }
     };
 
@@ -4082,6 +4152,7 @@ export default function BeatTheBet() {
         const updated = [...favoriteArtists, recommendedArtist];
         setFavoriteArtists(updated);
         localStorage.setItem('favoriteArtists', JSON.stringify(updated));
+        syncSettingsToSupabase({ favorite_artists: updated }).catch(() => {});
         addPoints(10, `Added artist: ${recommendedArtist}`);
         setRecommendedArtist(null);
         setArtistInput('');
@@ -4956,103 +5027,85 @@ export default function BeatTheBet() {
   );
 
   // Music Discovery - Full implementation ready for Spotify/Last.fm API
+  const TopTracksDisplay = ({ artist, fetchTracks }) => {
+    const [tracks, setTracks] = React.useState([]);
+    const [loading, setLoading] = React.useState(true);
+    React.useEffect(() => {
+      let cancelled = false;
+      setLoading(true);
+      fetchTracks(artist).then(t => { if (!cancelled) { setTracks(t); setLoading(false); } });
+      return () => { cancelled = true; };
+    }, [artist]);
+    if (loading) return <p className="text-xs text-gray-400 mb-4">Loading tracks...</p>;
+    if (!tracks.length) return null;
+    return (
+      <div className="bg-gray-50 rounded-lg p-3 mb-4">
+        <p className="text-xs font-semibold text-gray-600 mb-1">Top Tracks:</p>
+        {tracks.map((t, i) => <p key={i} className="text-sm text-gray-700">• {t}</p>)}
+      </div>
+    );
+  };
+
   const MusicDiscoveryPage = () => {
     const [seedInput, setSeedInput] = useState('');
     const [generating, setGenerating] = useState(false);
     const [viewMode, setViewMode] = useState('discover');
     
-    const musicDB = {
-      'tame impala': { name: 'Tame Impala', genres: ['psychedelic rock'], topTracks: ['The Less I Know The Better', 'Let It Happen'],
-        similar: ['MGMT', 'Pond', 'Unknown Mortal Orchestra', 'Temples', 'King Gizzard & The Lizard Wizard', 'Melody\'s Echo Chamber', 'The Flaming Lips', 'Animal Collective', 'Psychedelic Porn Crumpets', 'GUM'] },
-      'arctic monkeys': { name: 'Arctic Monkeys', genres: ['indie rock'], topTracks: ['Do I Wanna Know?', '505'],
-        similar: ['The Strokes', 'Franz Ferdinand', 'The Killers', 'Catfish and the Bottlemen', 'The Last Shadow Puppets', 'The Vaccines', 'Interpol', 'The Libertines', 'Wolf Alice', 'Bloc Party'] },
-      'flume': { name: 'Flume', genres: ['electronic'], topTracks: ['Never Be Like You'],
-        similar: ['ODESZA', 'Disclosure', 'RÜFÜS DU SOL', 'What So Not', 'Hayden James', 'Porter Robinson', 'Madeon', 'Slow Magic', 'Louis The Child', 'San Holo'] },
-      'kendrick lamar': { name: 'Kendrick Lamar', genres: ['hip hop'], topTracks: ['HUMBLE.', 'DNA.'],
-        similar: ['J. Cole', 'Anderson .Paak', 'Vince Staples', 'ScHoolboy Q', 'Tyler, The Creator', 'Childish Gambino', 'Isaiah Rashad', 'Denzel Curry', 'Joey Bada$$', 'Earl Sweatshirt'] },
-      'billie eilish': { name: 'Billie Eilish', genres: ['pop'], topTracks: ['bad guy', 'when the party\'s over'],
-        similar: ['Finneas', 'Lorde', 'Clairo', 'girl in red', 'Conan Gray', 'Olivia Rodrigo', 'Gracie Abrams', 'Phoebe Bridgers', 'Beabadoobee', 'Reneé Rapp'] },
-      'the beatles': { name: 'The Beatles', genres: ['rock', 'classic rock'], topTracks: ['Hey Jude', 'Come Together', 'Let It Be'],
-        similar: ['The Rolling Stones', 'Pink Floyd', 'Led Zeppelin', 'The Who', 'Queen', 'The Kinks', 'The Beach Boys', 'Bob Dylan', 'Cream', 'The Doors'] },
-      'drake': { name: 'Drake', genres: ['hip hop', 'rap'], topTracks: ['God\'s Plan', 'One Dance', 'Hotline Bling'],
-        similar: ['The Weeknd', 'Travis Scott', 'Post Malone', '21 Savage', 'Future', 'Lil Baby', 'Gunna', 'Roddy Ricch', 'NBA YoungBoy', 'Lil Durk'] },
-      'taylor swift': { name: 'Taylor Swift', genres: ['pop', 'country'], topTracks: ['Shake It Off', 'Blank Space', 'Anti-Hero'],
-        similar: ['Olivia Rodrigo', 'Ariana Grande', 'Sabrina Carpenter', 'Gracie Abrams', 'Phoebe Bridgers', 'Lorde', 'Maisie Peters', 'Conan Gray', 'girl in red', 'Halsey'] },
-      'radiohead': { name: 'Radiohead', genres: ['alternative rock'], topTracks: ['Creep', 'Karma Police', 'No Surprises'],
-        similar: ['Thom Yorke', 'Portishead', 'Sigur Rós', 'Massive Attack', 'Alt-J', 'Atoms for Peace', 'The National', 'Blur', 'Spiritualized', 'Talk Talk'] },
-      'daft punk': { name: 'Daft Punk', genres: ['electronic', 'house'], topTracks: ['Get Lucky', 'One More Time', 'Harder Better Faster Stronger'],
-        similar: ['Justice', 'Deadmau5', 'The Chemical Brothers', 'Moderat', 'Kavinsky', 'M83', 'Phoenix', 'Chromeo', 'Röyksopp', 'Air'] },
-      'queen': { name: 'Queen', genres: ['rock', 'classic rock'], topTracks: ['Bohemian Rhapsody', 'We Will Rock You', 'Don\'t Stop Me Now'],
-        similar: ['David Bowie', 'Elton John', 'The Beatles', 'Muse', 'AC/DC', 'Journey', 'Boston', 'Foreigner', 'Styx', 'Electric Light Orchestra'] },
-      'nirvana': { name: 'Nirvana', genres: ['grunge', 'alternative rock'], topTracks: ['Smells Like Teen Spirit', 'Come As You Are', 'Heart-Shaped Box'],
-        similar: ['Foo Fighters', 'Pearl Jam', 'Soundgarden', 'Alice in Chains', 'Stone Temple Pilots', 'Smashing Pumpkins', 'Bush', 'Silverchair', 'The Pixies', 'Dinosaur Jr.'] },
-      'the weeknd': { name: 'The Weeknd', genres: ['r&b', 'pop'], topTracks: ['Blinding Lights', 'Starboy', 'The Hills'],
-        similar: ['Drake', 'Travis Scott', 'Post Malone', 'Frank Ocean', 'Bryson Tiller', 'PARTYNEXTDOOR', 'Miguel', '6LACK', 'Khalid', 'Brent Faiyaz'] },
-      'post malone': { name: 'Post Malone', genres: ['hip hop', 'pop'], topTracks: ['Circles', 'Rockstar', 'Sunflower'],
-        similar: ['Drake', 'Travis Scott', 'The Weeknd', 'Juice WRLD', 'Lil Uzi Vert', 'Swae Lee', 'Ty Dolla $ign', '24kGoldn', 'Iann Dior', 'Trippie Redd'] },
-      'the strokes': { name: 'The Strokes', genres: ['indie rock', 'garage rock'], topTracks: ['Last Nite', 'Reptilia', 'Someday'],
-        similar: ['Arctic Monkeys', 'The Killers', 'Franz Ferdinand', 'Interpol', 'The White Stripes', 'Yeah Yeah Yeahs', 'Kings of Leon', 'Vampire Weekend', 'The Hives', 'Bloc Party'] },
-      'mac miller': { name: 'Mac Miller', genres: ['hip hop', 'rap'], topTracks: ['Self Care', 'Good News', 'Dang!'],
-        similar: ['Tyler, The Creator', 'Frank Ocean', 'Aminé', 'Vince Staples', 'Anderson .Paak', 'Thundercat', 'SZA', 'Steve Lacy', 'Brockhampton', 'The Internet'] },
-      'lorde': { name: 'Lorde', genres: ['pop', 'art pop'], topTracks: ['Royals', 'Green Light', 'Team'],
-        similar: ['Billie Eilish', 'Lana Del Rey', 'Halsey', 'Florence + The Machine', 'Banks', 'FKA twigs', 'Grimes', 'Charli XCX', 'St. Vincent', 'HAIM'] },
-      'kanye west': { name: 'Kanye West', genres: ['hip hop', 'rap'], topTracks: ['Stronger', 'Gold Digger', 'Heartless'],
-        similar: ['Kid Cudi', 'Jay-Z', 'Pusha T', 'Travis Scott', 'Chance the Rapper', 'Childish Gambino', 'Tyler, The Creator', 'Frank Ocean', 'Playboi Carti', 'Lil Uzi Vert'] },
-      'pink floyd': { name: 'Pink Floyd', genres: ['progressive rock', 'psychedelic rock'], topTracks: ['Wish You Were Here', 'Comfortably Numb', 'Another Brick in the Wall'],
-        similar: ['The Beatles', 'Led Zeppelin', 'King Crimson', 'Yes', 'Genesis', 'David Gilmour', 'Roger Waters', 'The Doors', 'Jethro Tull', 'Emerson Lake & Palmer'] },
-      // Genre-based fallback recommendations
-      '_generic_rock': ['The Black Keys', 'Arctic Monkeys', 'Queens of the Stone Age', 'Foo Fighters', 'Royal Blood', 'Cage The Elephant', 'Twenty One Pilots', 'Imagine Dragons'],
-      '_generic_pop': ['Dua Lipa', 'The Weeknd', 'Doja Cat', 'Olivia Rodrigo', 'Harry Styles', 'Ed Sheeran', 'Bruno Mars', 'The Chainsmokers'],
-      '_generic_electronic': ['Flume', 'ODESZA', 'Disclosure', 'Caribou', 'Four Tet', 'Calvin Harris', 'Kygo', 'Zedd'],
-      '_generic_hiphop': ['Kendrick Lamar', 'J. Cole', 'Tyler, The Creator', 'Denzel Curry', 'JID', 'Baby Keem', 'Cordae', 'Jack Harlow'],
-      '_generic_indie': ['Tame Impala', 'Mac DeMarco', 'The 1975', 'Alvvays', 'Beach House', 'Bon Iver', 'Vampire Weekend', 'MGMT']
+    const LASTFM_KEY = 'bf998e6a6a406abca0544b6d74c51c40';
+    const LASTFM = 'https://ws.audioscrobbler.com/2.0/';
+
+    const lastfmSimilar = async (artist) => {
+      try {
+        const r = await fetch(`${LASTFM}?method=artist.getsimilar&artist=${encodeURIComponent(artist)}&api_key=${LASTFM_KEY}&format=json&limit=20`);
+        const d = await r.json();
+        return Array.isArray(d?.similarartists?.artist) ? d.similarartists.artist.map(a => a.name) : [];
+      } catch (e) { return []; }
     };
 
-    const generateRecs = () => {
+    const lastfmTopTracks = async (artist) => {
+      try {
+        const r = await fetch(`${LASTFM}?method=artist.gettoptracks&artist=${encodeURIComponent(artist)}&api_key=${LASTFM_KEY}&format=json&limit=3`);
+        const d = await r.json();
+        return Array.isArray(d?.toptracks?.track) ? d.toptracks.track.map(t => t.name) : [];
+      } catch (e) { return []; }
+    };
+
+    const generateRecs = async () => {
       setGenerating(true);
       setCurrentRecommendationIndex(0);
-      setTimeout(() => {
-        const recs = [];
-        let foundAny = false;
-        
-        seedArtists.forEach(seed => {
-          const data = musicDB[seed.toLowerCase()];
-          if (data) {
-            foundAny = true;
-            data.similar.forEach((artist, idx) => {
-              if (!artistFeedback[artist] && !seedArtists.includes(artist)) {
-                recs.push({ name: artist, source: seed, score: 100 - (idx * 10) });
-              }
-            });
-          }
+      const recs = [];
+      try {
+        const results = await Promise.allSettled(
+          seedArtists.map(async (seed) => {
+            const similar = await lastfmSimilar(seed);
+            return similar
+              .filter(a => !artistFeedback[a] && !seedArtists.map(s=>s.toLowerCase()).includes(a.toLowerCase()))
+              .map((artist, i) => ({ name: artist, source: seed, score: 100 - i * 3 }));
+          })
+        );
+        results.forEach(r => { if (r.status === 'fulfilled') recs.push(...r.value); });
+      } catch (e) {}
+      if (recs.length === 0) {
+        ['Arctic Monkeys','Tame Impala','The Strokes','Flume','Kendrick Lamar',
+         'Billie Eilish','Mac Miller','The Weeknd','Radiohead','ODESZA'
+        ].forEach((a, i) => {
+          if (!artistFeedback[a]) recs.push({ name: a, source: 'Popular', score: 80 - i*5 });
         });
-        
-        // Fallback: if no matches found, suggest generic popular artists
-        if (!foundAny || recs.length === 0) {
-          const fallbackArtists = [
-            ...musicDB['_generic_rock'],
-            ...musicDB['_generic_pop'],
-            ...musicDB['_generic_indie']
-          ];
-          fallbackArtists.forEach((artist, idx) => {
-            if (!artistFeedback[artist] && !seedArtists.includes(artist)) {
-              recs.push({ name: artist, source: 'Popular', score: 80 - (idx * 5) });
-            }
-          });
-        }
-        
-        const uniqueRecs = Array.from(new Map(recs.map(r => [r.name, r])).values()).sort((a, b) => b.score - a.score);
-        setRecommendedArtists(uniqueRecs);
-        setCurrentRecommendationIndex(0);
-        setGenerating(false);
-      }, 600);
+      }
+      const unique = Array.from(new Map(recs.map(r=>[r.name.toLowerCase(),r])).values())
+        .sort((a,b) => b.score - a.score);
+      setRecommendedArtists(unique);
+      setCurrentRecommendationIndex(0);
+      setGenerating(false);
     };
+
 
     const addSeed = () => {
       if (seedInput.trim() && !seedArtists.includes(seedInput.trim())) {
         const updated = [...seedArtists, seedInput.trim()];
         setSeedArtists(updated);
         localStorage.setItem('seedArtists', JSON.stringify(updated));
+        syncSettingsToSupabase({ seed_artists: updated }).catch(() => {});
         setSeedInput('');
       }
     };
@@ -5063,6 +5116,7 @@ export default function BeatTheBet() {
       const updated = {...artistFeedback, [current.name]: status};
       setArtistFeedback(updated);
       localStorage.setItem('artistFeedback', JSON.stringify(updated));
+      syncSettingsToSupabase({ artist_feedback: updated }).catch(() => {});
       if (status === 'saved') {
         const saved = [...savedForLater, current];
         setSavedForLater(saved);
@@ -5153,14 +5207,7 @@ export default function BeatTheBet() {
                       <h2 className="text-2xl font-bold mb-2">{current.name}</h2>
                       <p className="text-sm text-purple-600 mb-4">Because you like {current.source}</p>
                       
-                      {musicDB[current.name.toLowerCase()] && (
-                        <div className="bg-gray-50 rounded-lg p-3 mb-4">
-                          <p className="text-xs font-semibold text-gray-600 mb-1">Top Tracks:</p>
-                          {musicDB[current.name.toLowerCase()].topTracks?.map((track, idx) => (
-                            <p key={idx} className="text-sm text-gray-700">• {track}</p>
-                          ))}
-                        </div>
-                      )}
+                      <TopTracksDisplay artist={current.name} fetchTracks={lastfmTopTracks} />
                     </div>
 
                     <div className="grid grid-cols-2 gap-2 mb-2">
@@ -5620,8 +5667,8 @@ export default function BeatTheBet() {
             {onboardingStep > 0 && onboardingStep < 6 && (
               <div className="mb-6">
                 <div className="flex justify-between text-xs text-gray-600 mb-2">
-                  <span>Step {onboardingStep === 0 ? 1 : onboardingStep - 1} of 4</span>
-                  <span>{Math.round(((onboardingStep === 0 ? 1 : onboardingStep - 1) / 4) * 100)}%</span>
+                  <span>Step {[0,2,3,4,5].indexOf(onboardingStep)+1} of 5</span>
+                  <span>{Math.round(([0,2,3,4,5].indexOf(onboardingStep)+1)/5*100)}%</span>
                 </div>
                 <div className="w-full bg-gray-200 rounded-full h-2">
                   <div 
@@ -5637,7 +5684,7 @@ export default function BeatTheBet() {
             {/* Back Button */}
             {onboardingStep > 0 && onboardingStep < 6 && (
               <button
-                onClick={() => setOnboardingStep(onboardingStep === 2 ? 0 : onboardingStep - 1)}
+                onClick={() => { const steps=[0,2,3,4,5,6]; const i=steps.indexOf(onboardingStep); setOnboardingStep(i>0?steps[i-1]:0); }}
                 className="w-full text-gray-500 text-sm mt-4 hover:text-gray-700"
               >
                 ← Back
@@ -6163,6 +6210,7 @@ export default function BeatTheBet() {
                   onClick={() => {
                     setJournalMode('structured');
                     localStorage.setItem('journalMode', 'structured');
+                    syncSettingsToSupabase({ journal_mode: 'structured' }).catch(() => {});
                   }}
                   className={`flex-1 py-3 rounded-lg font-semibold transition-colors ${
                     journalMode === 'structured'
@@ -6176,6 +6224,7 @@ export default function BeatTheBet() {
                   onClick={() => {
                     setJournalMode('open');
                     localStorage.setItem('journalMode', 'open');
+                    syncSettingsToSupabase({ journal_mode: 'open' }).catch(() => {});
                   }}
                   className={`flex-1 py-3 rounded-lg font-semibold transition-colors ${
                     journalMode === 'open'
@@ -7032,6 +7081,7 @@ export default function BeatTheBet() {
           : [...selectedInterests, interestId];
         setSelectedInterests(updated);
         localStorage.setItem('selectedInterests', JSON.stringify(updated));
+        syncSettingsToSupabase({ selected_interests: updated }).catch(() => {});
         if (!selectedInterests.includes(interestId)) {
           addPoints(5, `Added interest: ${availableInterests.find(i => i.id === interestId).name}`);
         }
@@ -7773,12 +7823,7 @@ Keep going! Every day counts. 💪
               >
                 Open Settings
               </button>
-              <button
-                onClick={logout}
-                className="w-full bg-red-500 hover:bg-red-600 text-white rounded-lg py-3 font-semibold transition-colors"
-              >
-                Log Out
-              </button>
+
             </div>
           </div>
 
