@@ -5070,34 +5070,83 @@ export default function BeatTheBet() {
       } catch (e) { return []; }
     };
 
+    // Track which artists we've already fetched similar artists FROM
+    // so we don't re-fetch the same source repeatedly
+    const fetchedSources = React.useRef(new Set());
+
+    const fetchSimilarFrom = async (sourceArtists) => {
+      // Only fetch from artists we haven't fetched from yet
+      const newSources = sourceArtists.filter(a => !fetchedSources.current.has(a.toLowerCase()));
+      if (newSources.length === 0) return [];
+
+      const allKnown = new Set([
+        ...Object.keys(artistFeedback).map(a => a.toLowerCase()),
+        ...seedArtists.map(a => a.toLowerCase()),
+        ...recommendedArtists.map(a => a.name.toLowerCase())
+      ]);
+
+      const results = await Promise.allSettled(
+        newSources.map(async (source) => {
+          fetchedSources.current.add(source.toLowerCase());
+          const similar = await lastfmSimilar(source);
+          return similar
+            .filter(a => !allKnown.has(a.toLowerCase()))
+            .map((artist, i) => ({ name: artist, source, score: 85 - i * 3 }));
+        })
+      );
+
+      const recs = [];
+      results.forEach(r => { if (r.status === 'fulfilled') recs.push(...r.value); });
+      return recs;
+    };
+
     const generateRecs = async () => {
       setGenerating(true);
-      setCurrentRecommendationIndex(0);
-      const recs = [];
-      try {
-        const results = await Promise.allSettled(
-          seedArtists.map(async (seed) => {
-            const similar = await lastfmSimilar(seed);
-            return similar
-              .filter(a => !artistFeedback[a] && !seedArtists.map(s=>s.toLowerCase()).includes(a.toLowerCase()))
-              .map((artist, i) => ({ name: artist, source: seed, score: 100 - i * 3 }));
-          })
-        );
-        results.forEach(r => { if (r.status === 'fulfilled') recs.push(...r.value); });
-      } catch (e) {}
+      fetchedSources.current.clear(); // Reset on fresh generate
+
+      // Fetch from seeds first, then liked artists
+      const likedArtists = Object.keys(artistFeedback).filter(a => artistFeedback[a] === 'liked');
+      const allSources = [...new Set([...seedArtists, ...likedArtists])];
+
+      let recs = await fetchSimilarFrom(allSources);
+
+      // Fallback if Last.fm returns nothing
       if (recs.length === 0) {
-        ['Arctic Monkeys','Tame Impala','The Strokes','Flume','Kendrick Lamar',
-         'Billie Eilish','Mac Miller','The Weeknd','Radiohead','ODESZA'
-        ].forEach((a, i) => {
-          if (!artistFeedback[a]) recs.push({ name: a, source: 'Popular', score: 80 - i*5 });
+        const fallback = ['Arctic Monkeys','Tame Impala','The Strokes','Flume','Kendrick Lamar',
+          'Billie Eilish','Mac Miller','The Weeknd','Radiohead','ODESZA','Jungle','Glass Animals',
+          'Parcels','Khruangbin','Unknown Mortal Orchestra','Men I Trust','Mild High Club'];
+        fallback.forEach((a, i) => {
+          if (!artistFeedback[a]) recs.push({ name: a, source: 'Popular', score: 80 - i * 4 });
         });
       }
-      const unique = Array.from(new Map(recs.map(r=>[r.name.toLowerCase(),r])).values())
-        .sort((a,b) => b.score - a.score);
+
+      const unique = Array.from(new Map(recs.map(r => [r.name.toLowerCase(), r])).values())
+        .sort((a, b) => b.score - a.score);
       setRecommendedArtists(unique);
       setCurrentRecommendationIndex(0);
       setGenerating(false);
     };
+
+    // Fetch more recommendations automatically when pool runs low
+    const fetchMoreRecs = React.useCallback(async () => {
+      if (generating) return;
+      setGenerating(true);
+
+      // Use liked artists as new discovery sources — chain discovery
+      const likedArtists = Object.keys(artistFeedback).filter(a => artistFeedback[a] === 'liked');
+      const allSources = [...new Set([...seedArtists, ...likedArtists])];
+
+      const newRecs = await fetchSimilarFrom(allSources);
+
+      if (newRecs.length > 0) {
+        const existing = new Set(recommendedArtists.map(r => r.name.toLowerCase()));
+        const fresh = newRecs.filter(r => !existing.has(r.name.toLowerCase()));
+        if (fresh.length > 0) {
+          setRecommendedArtists(prev => [...prev, ...fresh]);
+        }
+      }
+      setGenerating(false);
+    }, [generating, artistFeedback, seedArtists, recommendedArtists]);
 
 
     const addSeed = () => {
@@ -5117,6 +5166,21 @@ export default function BeatTheBet() {
       setArtistFeedback(updated);
       localStorage.setItem('artistFeedback', JSON.stringify(updated));
       syncSettingsToSupabase({ artist_feedback: updated }).catch(() => {});
+
+      // If liked, also add to liked artists list for chain discovery
+      if (status === 'liked') {
+        const updatedLiked = [...favoriteArtists, current.name];
+        setFavoriteArtists(updatedLiked);
+        localStorage.setItem('favoriteArtists', JSON.stringify(updatedLiked));
+        syncSettingsToSupabase({ favorite_artists: updatedLiked }).catch(() => {});
+      }
+
+      // Auto-fetch more when running low (5 or fewer left)
+      const remaining = recommendedArtists.length - currentRecommendationIndex - 1;
+      if (remaining <= 5 && !generating) {
+        fetchMoreRecs();
+      }
+
       if (status === 'saved') {
         const saved = [...savedForLater, current];
         setSavedForLater(saved);
@@ -5217,20 +5281,35 @@ export default function BeatTheBet() {
                       <button onClick={() => markArtist('saved')} className="bg-blue-500 text-white py-3 rounded-lg font-semibold">💾 Save</button>
                     </div>
                     <button onClick={() => markArtist('skipped')} className="w-full bg-gray-200 text-gray-700 py-2 rounded-lg font-semibold text-sm">Skip</button>
-                    <p className="text-xs text-gray-500 text-center mt-3">
-                      {currentRecommendationIndex + 1} of {recommendedArtists.length}
-                    </p>
+                    <div className="flex items-center justify-between mt-3">
+                      <p className="text-xs text-gray-500">
+                        {currentRecommendationIndex + 1} of {recommendedArtists.length}
+                      </p>
+                      {generating && (
+                        <p className="text-xs text-purple-500 flex items-center gap-1">
+                          <span className="w-2 h-2 bg-purple-400 rounded-full animate-pulse inline-block"></span>
+                          Finding more...
+                        </p>
+                      )}
+                    </div>
                   </div>
                 )}
 
                 {!current && recommendedArtists.length > 0 && (
                   <div className="bg-white rounded-xl shadow-md p-8 text-center">
-                    <p className="text-2xl mb-2">🎉</p>
-                    <p className="font-bold text-gray-800 mb-2">All done!</p>
-                    <p className="text-gray-600 mb-4">You've gone through all recommendations</p>
-                    <button onClick={generateRecs} className="bg-purple-500 hover:bg-purple-600 text-white px-6 py-3 rounded-lg font-semibold">
-                      Generate More
-                    </button>
+                    {generating ? (
+                      <>
+                        <div className="w-8 h-8 border-4 border-gray-200 border-t-purple-500 rounded-full animate-spin mx-auto mb-3"></div>
+                        <p className="text-gray-500 text-sm">Finding more artists...</p>
+                      </>
+                    ) : (
+                      <>
+                        <p className="font-bold text-gray-800 mb-2">Finding more for you...</p>
+                        <button onClick={fetchMoreRecs} className="bg-purple-500 hover:bg-purple-600 text-white px-6 py-3 rounded-lg font-semibold">
+                          Load More
+                        </button>
+                      </>
+                    )}
                   </div>
                 )}
 
