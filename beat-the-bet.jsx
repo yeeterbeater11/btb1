@@ -5074,8 +5074,32 @@ export default function BeatTheBet() {
     // so we don't re-fetch the same source repeatedly
     const fetchedSources = React.useRef(new Set());
 
+    // Shuffle array helper
+    const shuffleArray = (arr) => {
+      const a = [...arr];
+      for (let i = a.length - 1; i > 0; i--) {
+        const j = Math.floor(Math.random() * (i + 1));
+        [a[i], a[j]] = [a[j], a[i]];
+      }
+      return a;
+    };
+
+    // Interleave recs so each card comes from a different source
+    // e.g. [Arctic from Tame, X from Drake, Y from Tame, Z from Drake...]
+    // rather than all Tame Impala recs then all Drake recs
+    const interleave = (recsBySource) => {
+      const sources = Object.keys(recsBySource);
+      const result = [];
+      let maxLen = Math.max(...sources.map(s => recsBySource[s].length));
+      for (let i = 0; i < maxLen; i++) {
+        for (const source of sources) {
+          if (recsBySource[source][i]) result.push(recsBySource[source][i]);
+        }
+      }
+      return result;
+    };
+
     const fetchSimilarFrom = async (sourceArtists) => {
-      // Only fetch from artists we haven't fetched from yet
       const newSources = sourceArtists.filter(a => !fetchedSources.current.has(a.toLowerCase()));
       if (newSources.length === 0) return [];
 
@@ -5085,57 +5109,64 @@ export default function BeatTheBet() {
         ...recommendedArtists.map(a => a.name.toLowerCase())
       ]);
 
-      const results = await Promise.allSettled(
-        newSources.map(async (source) => {
+      // Shuffle sources so rotation order is random each time
+      const shuffledSources = shuffleArray(newSources);
+
+      const recsBySource = {};
+      await Promise.allSettled(
+        shuffledSources.map(async (source) => {
           fetchedSources.current.add(source.toLowerCase());
           const similar = await lastfmSimilar(source);
-          return similar
+          recsBySource[source] = similar
             .filter(a => !allKnown.has(a.toLowerCase()))
             .map((artist, i) => ({ name: artist, source, score: 85 - i * 3 }));
         })
       );
 
-      const recs = [];
-      results.forEach(r => { if (r.status === 'fulfilled') recs.push(...r.value); });
-      return recs;
+      // Interleave so recs rotate through sources
+      return interleave(recsBySource);
     };
 
     const generateRecs = async () => {
       setGenerating(true);
-      fetchedSources.current.clear(); // Reset on fresh generate
+      fetchedSources.current.clear();
 
-      // Fetch from seeds first, then liked artists
       const likedArtists = Object.keys(artistFeedback).filter(a => artistFeedback[a] === 'liked');
-      const allSources = [...new Set([...seedArtists, ...likedArtists])];
+      // Shuffle the combined source list for variety
+      const allSources = shuffleArray([...new Set([...seedArtists, ...likedArtists])]);
 
       let recs = await fetchSimilarFrom(allSources);
 
-      // Fallback if Last.fm returns nothing
       if (recs.length === 0) {
-        const fallback = ['Arctic Monkeys','Tame Impala','The Strokes','Flume','Kendrick Lamar',
-          'Billie Eilish','Mac Miller','The Weeknd','Radiohead','ODESZA','Jungle','Glass Animals',
-          'Parcels','Khruangbin','Unknown Mortal Orchestra','Men I Trust','Mild High Club'];
+        const fallback = shuffleArray(['Arctic Monkeys','Tame Impala','The Strokes','Flume',
+          'Kendrick Lamar','Billie Eilish','Mac Miller','The Weeknd','Radiohead','ODESZA',
+          'Jungle','Glass Animals','Parcels','Khruangbin','Unknown Mortal Orchestra',
+          'Men I Trust','Mild High Club']);
         fallback.forEach((a, i) => {
           if (!artistFeedback[a]) recs.push({ name: a, source: 'Popular', score: 80 - i * 4 });
         });
       }
 
-      const unique = Array.from(new Map(recs.map(r => [r.name.toLowerCase(), r])).values())
-        .sort((a, b) => b.score - a.score);
+      // Deduplicate preserving interleaved order
+      const seen = new Set();
+      const unique = recs.filter(r => {
+        const k = r.name.toLowerCase();
+        if (seen.has(k)) return false;
+        seen.add(k);
+        return true;
+      });
+
       setRecommendedArtists(unique);
       setCurrentRecommendationIndex(0);
       setGenerating(false);
     };
 
-    // Fetch more recommendations automatically when pool runs low
     const fetchMoreRecs = React.useCallback(async () => {
       if (generating) return;
       setGenerating(true);
 
-      // Use liked artists as new discovery sources — chain discovery
       const likedArtists = Object.keys(artistFeedback).filter(a => artistFeedback[a] === 'liked');
-      const allSources = [...new Set([...seedArtists, ...likedArtists])];
-
+      const allSources = shuffleArray([...new Set([...seedArtists, ...likedArtists])]);
       const newRecs = await fetchSimilarFrom(allSources);
 
       if (newRecs.length > 0) {
@@ -5167,12 +5198,32 @@ export default function BeatTheBet() {
       localStorage.setItem('artistFeedback', JSON.stringify(updated));
       syncSettingsToSupabase({ artist_feedback: updated }).catch(() => {});
 
-      // If liked, also add to liked artists list for chain discovery
+      // If liked, immediately fetch from that artist and append to queue
       if (status === 'liked') {
         const updatedLiked = [...favoriteArtists, current.name];
         setFavoriteArtists(updatedLiked);
         localStorage.setItem('favoriteArtists', JSON.stringify(updatedLiked));
         syncSettingsToSupabase({ favorite_artists: updatedLiked }).catch(() => {});
+
+        // Fetch similar artists from the newly liked artist immediately
+        // so next cards say "Because you like [this artist]"
+        lastfmSimilar(current.name).then(similar => {
+          const allKnown = new Set([
+            ...Object.keys({...artistFeedback, [current.name]: status}).map(a => a.toLowerCase()),
+            ...seedArtists.map(a => a.toLowerCase()),
+          ]);
+          fetchedSources.current.add(current.name.toLowerCase());
+          const newRecs = similar
+            .filter(a => !allKnown.has(a.toLowerCase()))
+            .map((artist, i) => ({ name: artist, source: current.name, score: 80 - i * 3 }));
+          if (newRecs.length > 0) {
+            setRecommendedArtists(prev => {
+              const existingNames = new Set(prev.map(r => r.name.toLowerCase()));
+              const fresh = newRecs.filter(r => !existingNames.has(r.name.toLowerCase()));
+              return [...prev, ...fresh];
+            });
+          }
+        }).catch(() => {});
       }
 
       // Auto-fetch more when running low (5 or fewer left)
