@@ -2,10 +2,26 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
   <title>Beat the Bet</title>
   <meta name="description" content="Your gambling recovery companion" />
-  <meta name="theme-color" content="#1e293b" />
+  <meta name="theme-color" content="#1a1a2e" />
+
+  <!-- Favicon & App Icons -->
+  <link rel="icon" type="image/png" sizes="32x32" href="/favicon-32.png" />
+  <link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png" />
+  <link rel="manifest" href="/manifest.json" />
+
+  <!-- iOS standalone app meta -->
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <meta name="apple-mobile-web-app-title" content="Beat the Bet" />
+
+  <!-- Open Graph (for sharing) -->
+  <meta property="og:title" content="Beat the Bet" />
+  <meta property="og:description" content="Your gambling recovery companion" />
+  <meta property="og:type" content="website" />
+  <meta property="og:image" content="/icon-512.png" />
 
   <script src="https://cdn.tailwindcss.com"></script>
   <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
@@ -20,46 +36,26 @@
         return function RechartsStub() { return null; };
       }
     });
-
-    // Wait for lucide to load then create safe React components for every icon
-    window.addEventListener('load', function() {
-      if (!window.lucide) return;
-
-      // lucide UMD exposes createIcons() but not React components directly.
-      // We need lucide-react style components. Build them from the icon data.
-      var iconData = window.lucide;
-
-      // Create a safe icon component factory
-      window._lucideReactIcons = {};
-
-      Object.keys(iconData).forEach(function(key) {
-        // Only process icon data objects (they have a specific shape)
-        var val = iconData[key];
-        if (Array.isArray(val) || typeof val !== 'object' || val === null) return;
-        if (typeof val === 'function') return;
-
-        // Each lucide icon in UMD is [width, height, aliases, attrs, children]
-        // We'll create a React component that renders an SVG
-        window._lucideReactIcons[key] = function LucideIcon(props) {
-          var size = props.size || props.width || 24;
-          var color = props.color || 'currentColor';
-          var strokeWidth = props.strokeWidth || 2;
-          var className = props.className || '';
-          return null; // fallback - will be replaced below
-        };
-      });
-    });
   </script>
 
   <style>
-    body { margin: 0; padding: 0; background-color: #0f172a; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; }
+    body { margin: 0; padding: 0; background-color: #1a1a2e; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; }
     #root { min-height: 100vh; }
+    #loading { display: flex; flex-direction: column; align-items: center; justify-content: center; min-height: 100vh; color: white; font-family: -apple-system, sans-serif; }
+    #loading img { width: 100px; height: 100px; margin-bottom: 24px; animation: pulse 2s infinite; }
+    #loading p { font-size: 16px; opacity: 0.7; }
+    @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.5; } }
     ::-webkit-scrollbar { width: 6px; }
     ::-webkit-scrollbar-track { background: #1e293b; }
     ::-webkit-scrollbar-thumb { background: #475569; border-radius: 3px; }
   </style>
 </head>
 <body>
+  <!-- Loading screen shown while app loads -->
+  <div id="loading">
+    <img src="/apple-touch-icon.png" alt="Beat the Bet" />
+    <p>Loading...</p>
+  </div>
   <div id="root"></div>
 
   <script>
@@ -69,8 +65,6 @@
         // Remove "export default" so Babel standalone can handle it
         const cleaned = code.replace(/export\s+default\s+function\s+/, 'function ');
 
-        // Replace the lucide destructuring line with safe SVG-based React components
-        // This replaces: const { Clock, AlertCircle, ... } = lucide;
         const lucideReplacement = `
 // Safe Lucide icon components using inline SVG paths
 function makeLucideIcon(paths) {
@@ -165,13 +159,11 @@ const MoreVertical = makeLucideIcon(['M12 13a1 1 0 1 0 0-2 1 1 0 0 0 0 2z','M12 
 const AlertTriangle = makeLucideIcon(['M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z','M12 9v4','M12 17h.01']);
 `;
 
-        // Replace the lucide destructuring line with our safe components
         const withSafeIcons = cleaned.replace(
           /const\s*\{[^}]*\}\s*=\s*lucide\s*;/,
           lucideReplacement
         );
 
-        // Append the mount call
         const withMount = withSafeIcons + `
 ;
 const rootEl = document.getElementById('root');
@@ -180,12 +172,17 @@ root.render(React.createElement(BeatTheBet));
 `;
 
         const transformed = Babel.transform(withMount, { presets: ['react'] }).code;
+
+        // Hide loading screen
+        document.getElementById('loading').style.display = 'none';
+
         eval(transformed);
       })
       .catch(err => {
+        document.getElementById('loading').style.display = 'none';
         document.getElementById('root').innerHTML =
-          '<div style="color:white;padding:40px;font-family:sans-serif;">' +
-          '<h2>Failed to load app</h2><pre>' + err + '</pre></div>';
+          '<div style="color:white;padding:40px;font-family:sans-serif;background:#1a1a2e;min-height:100vh;">' +
+          '<h2>Failed to load app</h2><pre style="margin-top:16px;opacity:0.7;font-size:13px;">' + err + '</pre></div>';
       });
   </script>
 </body>
