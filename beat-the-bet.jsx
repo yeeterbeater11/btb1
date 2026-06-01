@@ -814,18 +814,37 @@ export default function BeatTheBet() {
           }
         }).catch(() => {}),
 
-      // Why I'm quitting
+      // Why I'm quitting - restore with fresh signed URLs for photos
       fetch(`${SUPABASE_URL}/rest/v1/why_quitting?user_id=eq.${uid}&limit=1`, { headers })
-        .then(r => r.json()).then(rows => {
-          if (Array.isArray(rows) && rows.length > 0) {
-            const row = rows[0];
-            const restored = {
-              primaryReason: row.primary_reason || '',
-              reasons: Array.isArray(row.reasons) ? row.reasons : []
-            };
-            setWhyImQuitting(restored);
-            localStorage.setItem('whyImQuitting', JSON.stringify(restored));
-          }
+        .then(r => r.json()).then(async rows => {
+          if (!Array.isArray(rows) || rows.length === 0) return;
+          const row = rows[0];
+          let reasons = Array.isArray(row.reasons) ? row.reasons : [];
+
+          // Refresh signed URLs for any photo reasons
+          reasons = await Promise.all(reasons.map(async (reason) => {
+            if (reason.type === 'photo' && reason.storagePath) {
+              try {
+                const signRes = await fetch(
+                  `${SUPABASE_URL}/storage/v1/object/sign/why-quitting-photos/${reason.storagePath}`,
+                  {
+                    method: 'POST',
+                    headers: { ...headers, 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ expiresIn: 31536000 })
+                  }
+                );
+                if (signRes.ok) {
+                  const signData = await signRes.json();
+                  return { ...reason, content: `${SUPABASE_URL}/storage/v1${signData.signedURL}` };
+                }
+              } catch (e) {}
+            }
+            return reason;
+          }));
+
+          const restored = { primaryReason: row.primary_reason || '', reasons };
+          setWhyImQuitting(restored);
+          localStorage.setItem('whyImQuitting', JSON.stringify(restored));
         }).catch(() => {}),
 
       // Earned badges
@@ -6008,8 +6027,13 @@ export default function BeatTheBet() {
                       const file = e.target.files[0];
                       if (!file) return;
 
-                      // Try Supabase Storage first, fall back to base64
+                      // Require login for photo uploads
                       const session = supabase.getSession();
+                      if (!session) {
+                        showError('Please log in to upload photos. Your photos are saved securely to your account.');
+                        return;
+                      }
+
                       if (session) {
                         try {
                           showSuccess('Uploading photo...');
@@ -6052,22 +6076,8 @@ export default function BeatTheBet() {
                         }
                       }
 
-                      // Fallback: base64 in localStorage
-                      const reader = new FileReader();
-                      reader.onload = (ev) => {
-                        const newReason = {
-                          id: Date.now(),
-                          type: 'photo',
-                          content: ev.target.result,
-                          filename: file.name,
-                          timestamp: new Date().toISOString()
-                        };
-                        const updated = { ...whyImQuitting, reasons: [...whyImQuitting.reasons, newReason] };
-                        setWhyImQuitting(updated);
-                        localStorage.setItem('whyImQuitting', JSON.stringify(updated));
-                        showSuccess('Photo added!');
-                      };
-                      reader.readAsDataURL(file);
+                      // No fallback - require login for photo uploads
+                      showError('Please log in to upload photos. Your photos are saved to your account.');
                     }}
                   />
                 </label>
@@ -7678,56 +7688,22 @@ Keep going! Every day counts. 💪
               <div className="p-5 space-y-4">
                 <div>
                   <label className="block text-sm font-semibold text-gray-700 mb-2">
-                    Quit Date (Last Gambled)
+                    Recovery Timer
                   </label>
-                  {editingTimer ? (
-                    <div className="space-y-2">
-                      <input
-                        type="date"
-                        value={tempTimerDate}
-                        onChange={(e) => setTempTimerDate(e.target.value)}
-                        max={new Date().toISOString().split('T')[0]}
-                        className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
-                      />
-                      <div className="flex gap-2">
-                        <button
-                          onClick={saveTimerDate}
-                          disabled={!tempTimerDate}
-                          className="flex-1 bg-blue-500 hover:bg-blue-600 disabled:bg-gray-300 text-white px-4 py-2 rounded-lg font-semibold"
-                        >
-                          Save
-                        </button>
-                        <button
-                          onClick={() => setEditingTimer(false)}
-                          className="flex-1 bg-gray-200 hover:bg-gray-300 text-gray-700 px-4 py-2 rounded-lg font-semibold"
-                        >
-                          Cancel
-                        </button>
-                      </div>
-                      <p className="text-xs text-yellow-600">
-                        ⚠️ This will reset your timer. Only change if you made a mistake.
-                      </p>
-                    </div>
-                  ) : (
-                    <div className="flex items-center justify-between">
-                      <span className="text-gray-900 font-medium">
-                        {new Date(startDate).toLocaleDateString('en-AU', { year: 'numeric', month: 'long', day: 'numeric' })}
-                      </span>
-                      <button
-                        onClick={() => {
-                          setTempTimerDate(new Date(startDate).toISOString().split('T')[0]);
-                          setEditingTimer(true);
-                        }}
-                        className="text-blue-600 hover:text-blue-700 text-sm font-semibold"
-                      >
-                        Edit
-                      </button>
-                    </div>
-                  )}
-                </div>
-                <div className="bg-blue-50 border-l-4 border-blue-500 p-3 rounded">
-                  <p className="text-xs text-gray-700">
-                    Current streak: <strong>{getDaysClean()} days gamble-free</strong>
+                  <div className="flex items-center justify-between mb-3">
+                    <span className="text-gray-900 font-medium">
+                      {new Date(startDate).toLocaleDateString('en-AU', { year: 'numeric', month: 'long', day: 'numeric' })}
+                    </span>
+                    <span className="text-blue-600 font-bold text-sm">{getDaysClean()} days</span>
+                  </div>
+                  <button
+                    onClick={() => setShowResetModal(true)}
+                    className="w-full border border-red-300 text-red-500 hover:bg-red-50 rounded-lg py-2 text-sm font-semibold transition-colors"
+                  >
+                    Reset timer to today
+                  </button>
+                  <p className="text-xs text-gray-400 mt-2 text-center">
+                    Only use this if you gambled today and need to start fresh.
                   </p>
                 </div>
               </div>
