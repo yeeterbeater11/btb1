@@ -301,79 +301,12 @@ export default function BeatTheBet() {
   const [isAdminUser, setIsAdminUser] = React.useState(false);
   const [adminCheckDone, setAdminCheckDone] = React.useState(false);
 
-  // Admin panel data - lives in parent so it survives AdminPanel remounts
-  const [adminFlaggedMessages, setAdminFlaggedMessages] = React.useState([]);
-  const [adminUserStats, setAdminUserStats] = React.useState(null);
-  const [adminLoading, setAdminLoading] = React.useState(false);
-  const [adminLoadError, setAdminLoadError] = React.useState('');
+  // adminEmails lives in parent (needed for isAdmin check outside panel)
   const [adminEmails, setAdminEmails] = React.useState(() => {
     const saved = localStorage.getItem('adminEmails');
     return saved ? JSON.parse(saved) : ['beatthebetadmin@gmail.com'];
   });
 
-  const adminLoadingRef = React.useRef(false);
-  const loadAdminData = React.useCallback(async () => {
-    if (adminLoadingRef.current) {
-      console.log('[Admin] loadAdminData already running, skipping');
-      return;
-    }
-    adminLoadingRef.current = true;
-    setAdminLoading(true);
-    setAdminLoadError('');
-    const session = supabase.getSession();
-    if (!session) { adminLoadingRef.current = false; setAdminLoading(false); return; }
-    const headers = {
-      'apikey': SUPABASE_ANON_KEY,
-      'Authorization': `Bearer ${session.access_token}`
-    };
-
-    const withTimeout = (promise, ms, label) => Promise.race([
-      promise,
-      new Promise((_, reject) => setTimeout(() => reject(new Error(`${label} timed out`)), ms))
-    ]);
-
-    try {
-      const [msgsResult, profilesResult, adminsResult] = await Promise.allSettled([
-        withTimeout(
-          fetch(`${SUPABASE_URL}/rest/v1/messages?flagged=eq.true&order=created_at.desc&limit=100`, { headers })
-            .then(async r => ({ status: r.status, data: await r.json() })),
-          5000, 'flagged_messages'
-        ),
-        withTimeout(
-          fetch(`${SUPABASE_URL}/rest/v1/profiles?select=id,username,created_at,points,level&order=created_at.desc&limit=100`, { headers })
-            .then(async r => ({ status: r.status, data: await r.json() })),
-          5000, 'profiles'
-        ),
-        withTimeout(
-          fetch(`${SUPABASE_URL}/rest/v1/admins?select=email,added_at&order=added_at.asc`, { headers })
-            .then(async r => ({ status: r.status, data: await r.json() })),
-          5000, 'admins'
-        )
-      ]);
-
-      if (msgsResult.status === 'fulfilled' && msgsResult.value.status === 200) {
-        const allFlagged = Array.isArray(msgsResult.value.data) ? msgsResult.value.data : [];
-        setAdminFlaggedMessages(allFlagged);
-        // Note: queue splitting happens inside AdminPanel component
-      }
-      if (profilesResult.status === 'fulfilled' && profilesResult.value.status === 200) {
-        const users = profilesResult.value.data;
-        setAdminUserStats({ total: Array.isArray(users) ? users.length : 0, users: Array.isArray(users) ? users : [] });
-      }
-      if (adminsResult.status === 'fulfilled' && adminsResult.value.status === 200) {
-        const admins = adminsResult.value.data;
-        if (Array.isArray(admins)) {
-          setAdminEmails(admins.map(a => a.email));
-          localStorage.setItem('adminEmails', JSON.stringify(admins.map(a => a.email)));
-        }
-      }
-    } catch (e) {
-      setAdminLoadError(e.message);
-    } finally {
-      adminLoadingRef.current = false;
-      setAdminLoading(false);
-    }
-  }, []);
 
   const checkAdminStatus = React.useCallback(async () => {
     const session = supabase.getSession();
@@ -984,6 +917,59 @@ export default function BeatTheBet() {
     localStorage.setItem('isAuthenticated', 'true');
     localStorage.setItem('currentUser', JSON.stringify(user));
     return user;
+  };
+
+  const deleteAccount = async () => {
+    const session = supabase.getSession();
+    if (!session) return;
+    const uid = session.user.id;
+    const token = session.access_token;
+    const headers = {
+      'apikey': SUPABASE_ANON_KEY,
+      'Authorization': `Bearer ${token}`,
+      'Content-Type': 'application/json'
+    };
+
+    try {
+      // Delete all user data in order (cascade handles most, but be explicit)
+      await Promise.allSettled([
+        fetch(`${SUPABASE_URL}/rest/v1/journal_entries?user_id=eq.${uid}`, { method: 'DELETE', headers }),
+        fetch(`${SUPABASE_URL}/rest/v1/earned_badges?user_id=eq.${uid}`, { method: 'DELETE', headers }),
+        fetch(`${SUPABASE_URL}/rest/v1/activity_log?user_id=eq.${uid}`, { method: 'DELETE', headers }),
+        fetch(`${SUPABASE_URL}/rest/v1/why_quitting?user_id=eq.${uid}`, { method: 'DELETE', headers }),
+        fetch(`${SUPABASE_URL}/rest/v1/liabilities?user_id=eq.${uid}`, { method: 'DELETE', headers }),
+        fetch(`${SUPABASE_URL}/rest/v1/user_settings?user_id=eq.${uid}`, { method: 'DELETE', headers }),
+        fetch(`${SUPABASE_URL}/rest/v1/app_events?user_id=eq.${uid}`, { method: 'DELETE', headers }),
+        fetch(`${SUPABASE_URL}/rest/v1/user_moderation?user_id=eq.${uid}`, { method: 'DELETE', headers }),
+      ]);
+
+      // Delete profile
+      await fetch(`${SUPABASE_URL}/rest/v1/profiles?id=eq.${uid}`, { method: 'DELETE', headers });
+
+      // Delete auth user via Supabase admin API
+      await fetch(`${SUPABASE_URL}/auth/v1/user`, {
+        method: 'DELETE',
+        headers
+      });
+    } catch (e) {
+      console.warn('Some deletion steps failed:', e);
+    }
+
+    // Clear all local data regardless
+    const keys = [
+      'startDate','gambleFreeStartDate','userPoints','userLevel','earnedBadges',
+      'journalEntries','activityLog','whyImQuitting','savingsMilestones',
+      'paydaySettings','selectedInterests','seedArtists','artistFeedback',
+      'favoriteArtists','savedForLater','dailyGamblingSpend','lastCheckIn',
+      'journalMode','chatUsername','hasCompletedOnboarding','username',
+      'userAgeRange','userCity','isAuthenticated','currentUser','sb_session',
+      'adminEmails','reportedMessageIds','appOpenTimestamps','panicButtonTimestamps'
+    ];
+    keys.forEach(k => localStorage.removeItem(k));
+
+    setCurrentUser(null);
+    setIsAuthenticated(false);
+    setAuthScreen('welcome');
   };
 
   const logout = async () => {
@@ -1985,7 +1971,9 @@ export default function BeatTheBet() {
     if (activeTool === 'music-discovery') return <MusicDiscoveryPage />;
     if (activeTool === 'why-quitting') return <WhyImQuittingPage />;
     if (activeTool === 'settings') return <SettingsPage />;
-    if (activeTool === 'admin') return adminCheckDone ? (isAdmin() ? <AdminPanel /> : <div className='p-8 text-center text-gray-500'>Access denied.</div>) : <div className='p-8 text-center'><div className='w-8 h-8 border-4 border-gray-200 border-t-gray-800 rounded-full animate-spin mx-auto'></div></div>;
+    if (activeTool === 'admin') return isAdmin() ? <AdminPanel /> : <div className='p-8 text-center text-gray-500'>Access denied.</div>;
+    if (activeTool === 'privacy') return <PrivacyPolicyPage />;
+    if (activeTool === 'terms') return <TermsOfServicePage />;
     if (activeTool === 'nearby') return <NearbyPage />;
 
     // Otherwise show the tools list
@@ -7387,6 +7375,8 @@ export default function BeatTheBet() {
     const [editingTimer, setEditingTimer] = useState(false);
     const [tempTimerDate, setTempTimerDate] = useState('');
     const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
+    const [deleteConfirmText, setDeleteConfirmText] = useState('');
+    const [deletingAccount, setDeletingAccount] = useState(false);
 
     const saveUsername = () => {
       const trimmed = tempUsername.trim();
@@ -7792,6 +7782,52 @@ Keep going! Every day counts. 💪
                   Download a formatted text report of your recovery progress
                 </p>
 
+                {/* Account Deletion */}
+                <div className="border-t border-red-100 pt-4 mt-2">
+                  {!showDeleteConfirm ? (
+                    <button
+                      onClick={() => setShowDeleteConfirm(true)}
+                      className="w-full border-2 border-red-300 text-red-500 hover:bg-red-50 rounded-lg py-3 font-semibold transition-colors"
+                    >
+                      Delete My Account
+                    </button>
+                  ) : (
+                    <div className="bg-red-50 border-2 border-red-300 rounded-xl p-4">
+                      <p className="font-bold text-red-800 mb-1">Are you absolutely sure?</p>
+                      <p className="text-sm text-red-700 mb-4">
+                        This permanently deletes your account, all journal entries, badges, activity history, and recovery data. <strong>This cannot be undone.</strong>
+                      </p>
+                      <input
+                        type="text"
+                        value={deleteConfirmText}
+                        onChange={(e) => setDeleteConfirmText(e.target.value)}
+                        placeholder='Type DELETE to confirm'
+                        className="w-full p-3 border-2 border-red-300 rounded-lg mb-3 text-sm focus:outline-none focus:border-red-500"
+                      />
+                      <div className="flex gap-2">
+                        <button
+                          onClick={() => { setShowDeleteConfirm(false); setDeleteConfirmText(''); }}
+                          className="flex-1 bg-gray-200 hover:bg-gray-300 text-gray-800 rounded-lg py-2 font-semibold text-sm"
+                        >
+                          Cancel
+                        </button>
+                        <button
+                          onClick={async () => {
+                            if (deleteConfirmText !== 'DELETE') { showError('Type DELETE to confirm'); return; }
+                            setDeletingAccount(true);
+                            await deleteAccount();
+                            setDeletingAccount(false);
+                          }}
+                          disabled={deleteConfirmText !== 'DELETE' || deletingAccount}
+                          className="flex-1 bg-red-500 hover:bg-red-600 disabled:bg-red-300 text-white rounded-lg py-2 font-semibold text-sm"
+                        >
+                          {deletingAccount ? 'Deleting...' : 'Delete Forever'}
+                        </button>
+                      </div>
+                    </div>
+                  )}
+                </div>
+
                 <button
                   onClick={() => {
                     setHasCompletedOnboarding(false);
@@ -7869,6 +7905,20 @@ Keep going! Every day counts. 💪
                 <div className="flex justify-between">
                   <span>Platform</span>
                   <span className="font-semibold text-gray-900">Web (Mobile coming soon)</span>
+                </div>
+                <div className="border-t border-gray-100 pt-3 mt-1 space-y-2">
+                  <button
+                    onClick={() => { setActiveTab('resources'); setActiveTool('privacy'); }}
+                    className="w-full text-left text-blue-600 hover:text-blue-800 font-medium"
+                  >
+                    Privacy Policy →
+                  </button>
+                  <button
+                    onClick={() => { setActiveTab('resources'); setActiveTool('terms'); }}
+                    className="w-full text-left text-blue-600 hover:text-blue-800 font-medium"
+                  >
+                    Terms of Service →
+                  </button>
                 </div>
               </div>
             </div>
@@ -8838,84 +8888,107 @@ Keep going! Every day counts. 💪
 
 
   const AdminPanel = React.memo(() => {
-    const [newAdminEmail, setNewAdminEmail] = React.useState('');
-    const [activeAdminTab, setActiveAdminTab] = React.useState('critical');
     const [criticalQueue, setCriticalQueue] = React.useState([]);
     const [highQueue, setHighQueue] = React.useState([]);
     const [supportQueue, setSupportQueue] = React.useState([]);
+    const [userStats, setUserStats] = React.useState(null);
+    const [localAdminEmails, setLocalAdminEmails] = React.useState(adminEmails);
+    const [loading, setLoading] = React.useState(false);
+    const [loaded, setLoaded] = React.useState(false);
+    const [loadError, setLoadError] = React.useState('');
+    const [newAdminEmail, setNewAdminEmail] = React.useState('');
+    const [activeAdminTab, setActiveAdminTab] = React.useState('critical');
+    const isFetching = React.useRef(false);
 
-    // Use parent-level state so data survives remounts
-    const flaggedMessages = adminFlaggedMessages;
-    const userStats = adminUserStats;
-    const loading = adminLoading;
-    const loadError = adminLoadError;
-    const setFlaggedMessages = setAdminFlaggedMessages;
+    const loadData = React.useCallback(async () => {
+      if (isFetching.current) return;
+      isFetching.current = true;
+      setLoading(true);
+      setLoadError('');
 
-    React.useEffect(() => {
-      // Only load if we don't already have data and not currently loading
-      if (!adminUserStats && !adminLoadingRef.current) {
-        loadAdminData();
+      const session = supabase.getSession();
+      if (!session) {
+        setLoading(false);
+        isFetching.current = false;
+        setLoadError('Not logged in.');
+        return;
       }
-    }, []); // Empty deps - only run on mount
 
-    // Split flaggedMessages into queues when data loads
-    React.useEffect(() => {
-      if (flaggedMessages.length > 0) {
-        setCriticalQueue(flaggedMessages.filter(m => m.moderation_level === 'critical'));
-        setHighQueue(flaggedMessages.filter(m => m.moderation_level === 'high' || !m.moderation_level));
+      const token = session.access_token;
+      const h = { 'apikey': SUPABASE_ANON_KEY, 'Authorization': `Bearer ${token}` };
+
+      const safe = (promise) => promise.catch(() => ({ ok: false, data: [] }));
+
+      try {
+        const [critRes, highRes, suppRes, usersRes, adminsRes] = await Promise.all([
+          safe(fetch(`${SUPABASE_URL}/rest/v1/messages?flagged=eq.true&moderation_level=eq.critical&reviewed=eq.false&order=created_at.desc&limit=50`, { headers: h }).then(async r => ({ ok: r.ok, data: await r.json() }))),
+          safe(fetch(`${SUPABASE_URL}/rest/v1/messages?flagged=eq.true&moderation_level=eq.high&reviewed=eq.false&order=created_at.desc&limit=50`, { headers: h }).then(async r => ({ ok: r.ok, data: await r.json() }))),
+          safe(fetch(`${SUPABASE_URL}/rest/v1/messages?moderation_level=eq.support&reviewed=eq.false&order=created_at.desc&limit=50`, { headers: h }).then(async r => ({ ok: r.ok, data: await r.json() }))),
+          safe(fetch(`${SUPABASE_URL}/rest/v1/profiles?select=id,username,created_at,points,level&order=created_at.desc&limit=100`, { headers: h }).then(async r => ({ ok: r.ok, data: await r.json() }))),
+          safe(fetch(`${SUPABASE_URL}/rest/v1/admins?select=email,added_at&order=added_at.asc`, { headers: h }).then(async r => ({ ok: r.ok, data: await r.json() }))),
+        ]);
+
+        if (critRes.ok) setCriticalQueue(Array.isArray(critRes.data) ? critRes.data : []);
+        if (highRes.ok) setHighQueue(Array.isArray(highRes.data) ? highRes.data : []);
+        if (suppRes.ok) setSupportQueue(Array.isArray(suppRes.data) ? suppRes.data : []);
+        if (usersRes.ok) {
+          const u = Array.isArray(usersRes.data) ? usersRes.data : [];
+          setUserStats({ total: u.length, users: u });
+        }
+        if (adminsRes.ok && Array.isArray(adminsRes.data)) {
+          const emails = adminsRes.data.map(a => a.email);
+          setLocalAdminEmails(emails);
+          setAdminEmails(emails);
+          localStorage.setItem('adminEmails', JSON.stringify(emails));
+        }
+
+        if (!critRes.ok && !highRes.ok) {
+          setLoadError('Could not load messages. Make sure admin_fix.sql has been run in Supabase.');
+        }
+      } catch (e) {
+        setLoadError(`Error: ${e.message}`);
+      } finally {
+        isFetching.current = false;
+        setLoading(false);
+        setLoaded(true);
       }
-    }, [flaggedMessages]);
+    }, []);
 
-    // Also fetch support queue separately (not flagged=true)
     React.useEffect(() => {
-      const fetchSupportQueue = async () => {
-        const session = supabase.getSession();
-        if (!session) return;
-        try {
-          const res = await fetch(
-            `${SUPABASE_URL}/rest/v1/messages?moderation_level=eq.support&reviewed=eq.false&order=created_at.desc&limit=50`,
-            { headers: { 'apikey': SUPABASE_ANON_KEY, 'Authorization': `Bearer ${session.access_token}` } }
-          );
-          if (res.ok) {
-            const data = await res.json();
-            setSupportQueue(Array.isArray(data) ? data : []);
-          }
-        } catch (e) {}
-      };
-      if (adminUserStats) fetchSupportQueue();
-    }, [adminUserStats]);
+      loadData();
+    }, []);
 
     const approveMessage = async (msg) => {
       const session = supabase.getSession();
+      if (!session) return;
       await fetch(`${SUPABASE_URL}/rest/v1/messages?id=eq.${msg.id}`, {
         method: 'PATCH',
         headers: { 'apikey': SUPABASE_ANON_KEY, 'Authorization': `Bearer ${session.access_token}`, 'Content-Type': 'application/json' },
         body: JSON.stringify({ flagged: false, reviewed: true })
       });
-      setAdminFlaggedMessages(prev => prev.filter(m => m.id !== msg.id));
-      setCriticalQueue(prev => prev.filter(m => m.id !== msg.id));
-      setHighQueue(prev => prev.filter(m => m.id !== msg.id));
-      setSupportQueue(prev => prev.filter(m => m.id !== msg.id));
-      showSuccess('Message restored and marked reviewed.');
+      setCriticalQueue(p => p.filter(m => m.id !== msg.id));
+      setHighQueue(p => p.filter(m => m.id !== msg.id));
+      setSupportQueue(p => p.filter(m => m.id !== msg.id));
+      showSuccess('Message restored.');
     };
 
     const deleteMessage = async (msg) => {
       const session = supabase.getSession();
+      if (!session) return;
       await fetch(`${SUPABASE_URL}/rest/v1/messages?id=eq.${msg.id}`, {
         method: 'DELETE',
         headers: { 'apikey': SUPABASE_ANON_KEY, 'Authorization': `Bearer ${session.access_token}` }
       });
-      setFlaggedMessages(prev => prev.filter(m => m.id !== msg.id));
-      setCriticalQueue(prev => prev.filter(m => m.id !== msg.id));
-      setHighQueue(prev => prev.filter(m => m.id !== msg.id));
-      setSupportQueue(prev => prev.filter(m => m.id !== msg.id));
+      setCriticalQueue(p => p.filter(m => m.id !== msg.id));
+      setHighQueue(p => p.filter(m => m.id !== msg.id));
+      setSupportQueue(p => p.filter(m => m.id !== msg.id));
       showSuccess('Message deleted.');
     };
 
     const addAdminEmail = async () => {
       const trimmed = newAdminEmail.trim().toLowerCase();
       if (!trimmed || !validators.email(trimmed)) { showError('Enter a valid email.'); return; }
-      if (adminEmails.includes(trimmed)) { showError('That email is already an admin.'); return; }
+      if (localAdminEmails.includes(trimmed)) { showError('Already an admin.'); return; }
       const session = supabase.getSession();
       try {
         const res = await fetch(`${SUPABASE_URL}/rest/v1/admins`, {
@@ -8923,8 +8996,9 @@ Keep going! Every day counts. 💪
           headers: { 'apikey': SUPABASE_ANON_KEY, 'Authorization': `Bearer ${session.access_token}`, 'Content-Type': 'application/json', 'Prefer': 'return=representation' },
           body: JSON.stringify({ email: trimmed })
         });
-        if (!res.ok) { const err = await res.json().catch(() => ({})); showError(err.message || 'Failed to add admin.'); return; }
-        const updated = [...adminEmails, trimmed];
+        if (!res.ok) { const e = await res.json().catch(() => ({})); showError(e.message || 'Failed to add admin.'); return; }
+        const updated = [...localAdminEmails, trimmed];
+        setLocalAdminEmails(updated);
         setAdminEmails(updated);
         localStorage.setItem('adminEmails', JSON.stringify(updated));
         setNewAdminEmail('');
@@ -8940,7 +9014,8 @@ Keep going! Every day counts. 💪
           method: 'DELETE',
           headers: { 'apikey': SUPABASE_ANON_KEY, 'Authorization': `Bearer ${session.access_token}` }
         });
-        const updated = adminEmails.filter(e => e !== email);
+        const updated = localAdminEmails.filter(e => e !== email);
+        setLocalAdminEmails(updated);
         setAdminEmails(updated);
         localStorage.setItem('adminEmails', JSON.stringify(updated));
         showSuccess('Admin removed.');
@@ -8949,33 +9024,71 @@ Keep going! Every day counts. 💪
 
     const formatDate = (ts) => new Date(ts).toLocaleDateString('en-AU', { day: 'numeric', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' });
 
+    const QueueView = ({ msgs, type }) => {
+      const borderMap = { critical: 'border-red-400', high: 'border-orange-400', support: 'border-blue-400' };
+      const labelMap = {
+        critical: 'Auto-hidden — requires review',
+        high: 'Flagged — visible to users, needs review',
+        support: 'Support queue — user may need help'
+      };
+      const bgMap = { critical: 'bg-red-50 text-red-800', high: 'bg-orange-50 text-orange-800', support: 'bg-blue-50 text-blue-800' };
+      return (
+        <div className="space-y-4">
+          <div className={`rounded-lg p-3 text-sm font-medium ${bgMap[type]}`}>
+            {labelMap[type]} · {msgs.length} item{msgs.length !== 1 ? 's' : ''}
+          </div>
+          {msgs.length === 0 && <p className="text-center text-gray-400 py-8">Nothing in this queue.</p>}
+          {msgs.map(msg => (
+            <div key={msg.id} className={`bg-white rounded-xl shadow-md p-5 border-l-4 ${borderMap[type]}`}>
+              <div className="flex items-start justify-between mb-2">
+                <div>
+                  <p className="font-semibold text-gray-800">{msg.username}</p>
+                  <p className="text-xs text-gray-400">{formatDate(msg.created_at)} · #{msg.room}</p>
+                </div>
+                {msg.moderation_score && (
+                  <span className="text-xs bg-gray-100 text-gray-600 px-2 py-1 rounded-full">{msg.moderation_score}% confidence</span>
+                )}
+              </div>
+              <p className="text-gray-700 bg-gray-50 rounded-lg p-3 mb-2 text-sm">{msg.message}</p>
+              {msg.moderation_reason && <p className="text-xs text-gray-500 mb-1"><strong>Reason:</strong> {msg.moderation_reason}</p>}
+              {msg.moderation_matched && <p className="text-xs text-gray-500 mb-3"><strong>Matched:</strong> "{msg.moderation_matched}"</p>}
+              <div className="flex gap-2">
+                <button onClick={() => approveMessage(msg)} className={`flex-1 ${type === 'support' ? 'bg-blue-500 hover:bg-blue-600' : 'bg-green-500 hover:bg-green-600'} text-white rounded-lg py-2 font-semibold text-sm`}>
+                  {type === 'support' ? 'Mark Reviewed' : 'Restore'}
+                </button>
+                <button onClick={() => deleteMessage(msg)} className="flex-1 bg-red-500 hover:bg-red-600 text-white rounded-lg py-2 font-semibold text-sm">Delete</button>
+              </div>
+            </div>
+          ))}
+        </div>
+      );
+    };
+
     return (
       <div className="flex flex-col min-h-screen bg-gray-50 pb-20">
         <div className="bg-gray-900 text-white p-6">
-          <button onClick={() => setActiveTool(null)} className="flex items-center mb-4 hover:opacity-80"><ArrowLeft className="w-5 h-5 mr-2" /><span>Back</span></button>
+          <button onClick={() => setActiveTool(null)} className="flex items-center mb-4 hover:opacity-80">
+            <ArrowLeft className="w-5 h-5 mr-2" /><span>Back</span>
+          </button>
           <h1 className="text-2xl font-bold">Admin Panel</h1>
           <p className="text-sm opacity-70">Beat the Bet — moderation & management</p>
         </div>
 
         <div className="bg-white border-b border-gray-200 px-4 py-3">
-          <div className="flex gap-2">
+          <div className="flex gap-2 overflow-x-auto">
             {[
               { id: 'critical', label: `Critical (${criticalQueue.length})`, color: 'bg-red-600' },
-              { id: 'high', label: `High Risk (${highQueue.length})`, color: 'bg-orange-500' },
+              { id: 'high', label: `High (${highQueue.length})`, color: 'bg-orange-500' },
               { id: 'support', label: `Support (${supportQueue.length})`, color: 'bg-blue-500' },
-              { id: 'users', label: `Users (${userStats?.total ?? '...'})`, color: null },
+              { id: 'users', label: `Users (${userStats?.total ?? '—'})`, color: null },
               { id: 'admins', label: 'Admins', color: null },
             ].map(tab => (
               <button key={tab.id} onClick={() => setActiveAdminTab(tab.id)}
-                className={`px-3 py-2 rounded-lg font-semibold text-xs whitespace-nowrap ${
-                  activeAdminTab === tab.id
-                    ? (tab.color || 'bg-gray-900') + ' text-white'
-                    : 'bg-gray-100 text-gray-700'
-                }`}>
+                className={`px-3 py-2 rounded-lg font-semibold text-xs whitespace-nowrap transition-colors ${activeAdminTab === tab.id ? (tab.color || 'bg-gray-900') + ' text-white' : 'bg-gray-100 text-gray-700 hover:bg-gray-200'}`}>
                 {tab.label}
               </button>
             ))}
-            <button onClick={loadAdminData} className="ml-auto px-3 py-2 rounded-lg text-sm bg-blue-100 text-blue-700 font-semibold">
+            <button onClick={loadData} disabled={loading} className="ml-auto px-3 py-2 rounded-lg text-xs bg-blue-100 text-blue-700 font-semibold disabled:opacity-50">
               {loading ? '...' : 'Refresh'}
             </button>
           </div>
@@ -8983,84 +9096,23 @@ Keep going! Every day counts. 💪
 
         <div className="flex-1 p-6 overflow-y-auto">
           <div className="max-w-2xl mx-auto">
-
-            {loading && !adminUserStats && criticalQueue.length === 0 && highQueue.length === 0 && supportQueue.length === 0 && (
+            {loading && !loaded && (
               <div className="text-center py-12">
                 <div className="w-8 h-8 border-4 border-gray-200 border-t-gray-800 rounded-full animate-spin mx-auto mb-3"></div>
                 <p className="text-gray-500">Loading...</p>
               </div>
             )}
-
             {loadError && (
               <div className="bg-red-50 border-l-4 border-red-500 rounded-lg p-4 mb-4">
                 <p className="font-semibold text-red-800 mb-1">Error loading data</p>
                 <p className="text-sm text-red-700">{loadError}</p>
-                <button onClick={loadAdminData} className="mt-2 bg-red-500 text-white px-4 py-2 rounded-lg text-sm font-semibold">Retry</button>
+                <button onClick={loadData} className="mt-2 bg-red-500 text-white px-4 py-2 rounded-lg text-sm font-semibold">Retry</button>
               </div>
             )}
 
-            {/* Queue card renderer */}
-            {(['critical', 'high', 'support'].includes(activeAdminTab)) && (() => {
-              const queueMap = { critical: criticalQueue, high: highQueue, support: supportQueue };
-              const borderMap = { critical: 'border-red-400', high: 'border-orange-400', support: 'border-blue-400' };
-              const labelMap = {
-                critical: 'Auto-hidden — requires review',
-                high: 'Flagged — visible to users, needs review',
-                support: 'Support queue — user may need help'
-              };
-              const msgs = queueMap[activeAdminTab];
-              return (
-                <div className="space-y-4">
-                  <div className={`rounded-lg p-3 text-sm font-medium ${
-                    activeAdminTab === 'critical' ? 'bg-red-50 text-red-800' :
-                    activeAdminTab === 'high' ? 'bg-orange-50 text-orange-800' :
-                    'bg-blue-50 text-blue-800'
-                  }`}>
-                    {labelMap[activeAdminTab]} · {msgs.length} item{msgs.length !== 1 ? 's' : ''}
-                  </div>
-                  {msgs.length === 0 && (
-                    <p className="text-center text-gray-400 py-8">Nothing in this queue.</p>
-                  )}
-                  {msgs.map(msg => (
-                    <div key={msg.id} className={`bg-white rounded-xl shadow-md p-5 border-l-4 ${borderMap[activeAdminTab]}`}>
-                      <div className="flex items-start justify-between mb-2">
-                        <div>
-                          <p className="font-semibold text-gray-800">{msg.username}</p>
-                          <p className="text-xs text-gray-400">{formatDate(msg.created_at)} · #{msg.room}</p>
-                        </div>
-                        {msg.moderation_score && (
-                          <span className="text-xs bg-gray-100 text-gray-600 px-2 py-1 rounded-full">
-                            {msg.moderation_score}% confidence
-                          </span>
-                        )}
-                      </div>
-                      <p className="text-gray-700 bg-gray-50 rounded-lg p-3 mb-2 text-sm">{msg.message}</p>
-                      {msg.moderation_reason && (
-                        <p className="text-xs text-gray-500 mb-1">
-                          <strong>Reason:</strong> {msg.moderation_reason}
-                        </p>
-                      )}
-                      {msg.moderation_matched && (
-                        <p className="text-xs text-gray-500 mb-3">
-                          <strong>Matched:</strong> "{msg.moderation_matched}"
-                        </p>
-                      )}
-                      {activeAdminTab === 'support' ? (
-                        <div className="flex gap-2">
-                          <button onClick={() => approveMessage(msg)} className="flex-1 bg-blue-500 hover:bg-blue-600 text-white rounded-lg py-2 font-semibold text-sm">Mark Reviewed</button>
-                          <button onClick={() => deleteMessage(msg)} className="flex-1 bg-red-500 hover:bg-red-600 text-white rounded-lg py-2 font-semibold text-sm">Remove</button>
-                        </div>
-                      ) : (
-                        <div className="flex gap-2">
-                          <button onClick={() => approveMessage(msg)} className="flex-1 bg-green-500 hover:bg-green-600 text-white rounded-lg py-2 font-semibold text-sm">Restore</button>
-                          <button onClick={() => deleteMessage(msg)} className="flex-1 bg-red-500 hover:bg-red-600 text-white rounded-lg py-2 font-semibold text-sm">Delete</button>
-                        </div>
-                      )}
-                    </div>
-                  ))}
-                </div>
-              );
-            })()}
+            {activeAdminTab === 'critical' && <QueueView msgs={criticalQueue} type="critical" />}
+            {activeAdminTab === 'high' && <QueueView msgs={highQueue} type="high" />}
+            {activeAdminTab === 'support' && <QueueView msgs={supportQueue} type="support" />}
 
             {activeAdminTab === 'users' && (
               <div className="space-y-3">
@@ -9103,7 +9155,7 @@ Keep going! Every day counts. 💪
                 <div className="bg-white rounded-xl shadow-md p-5">
                   <h3 className="font-bold text-gray-800 mb-4">Admin Accounts</h3>
                   <div className="space-y-2 mb-4">
-                    {adminEmails.map(email => (
+                    {localAdminEmails.map(email => (
                       <div key={email} className="flex items-center justify-between p-3 bg-gray-50 rounded-lg">
                         <span className="text-sm font-medium text-gray-800">{email}</span>
                         <button onClick={() => removeAdminEmail(email)} className="text-red-400 hover:text-red-600 text-sm font-semibold">Remove</button>
@@ -9122,7 +9174,7 @@ Keep going! Every day counts. 💪
                   </div>
                 </div>
                 <div className="bg-yellow-50 border-l-4 border-yellow-500 rounded-lg p-4">
-                  <p className="text-sm text-gray-700 mb-2">Add an email to grant admin access. The user must have signed up first.</p>
+                  <p className="text-sm text-gray-700 mb-1">Add an email to grant admin access. The user must have signed up first.</p>
                   <p className="text-xs text-gray-500">After adding, run in Supabase SQL Editor:</p>
                   <code className="block text-xs bg-white rounded p-2 mt-1 text-gray-700 select-all">
                     {"update public.admins a set user_id = u.id from auth.users u where lower(u.email) = lower(a.email);"}
@@ -9130,12 +9182,100 @@ Keep going! Every day counts. 💪
                 </div>
               </div>
             )}
-
           </div>
         </div>
       </div>
     );
   });
+
+
+  // ============================================================
+  // Privacy Policy Page
+  // ============================================================
+  const PrivacyPolicyPage = () => (
+    <div className="flex flex-col min-h-screen bg-gray-50 pb-20">
+      <div className="bg-gray-900 text-white p-6">
+        <button onClick={() => setActiveTool(null)} className="flex items-center mb-4 hover:opacity-80">
+          <ArrowLeft className="w-5 h-5 mr-2" /><span>Back</span>
+        </button>
+        <h1 className="text-2xl font-bold">Privacy Policy</h1>
+        <p className="text-sm opacity-70">Version 1.0 · Last updated 1 June 2026</p>
+      </div>
+      <div className="flex-1 p-6 overflow-y-auto">
+        <div className="max-w-2xl mx-auto space-y-6 text-gray-700 text-sm leading-relaxed">
+
+          {[
+            { title: "1. About Beat the Bet", content: `Beat the Bet is an Australian-based gambling addiction recovery and support platform. Beat the Bet is operated by an Australian sole trader. All enquiries may be directed to beatthebetadmin@gmail.com. Further business details are available upon reasonable request.` },
+            { title: "2. Important Disclaimer", content: `Beat the Bet is a peer-support and recovery platform — not a medical, counselling, crisis, financial, or legal service. The Services are not a substitute for professional help. The platform may surface crisis resources where distress is detected; this does not constitute clinical assessment or intervention. If you are in crisis, contact emergency services immediately.` },
+            { title: "3. Information We Collect", content: `We collect: account information (email, username, password); recovery content (journal entries, timer data, milestones, chat messages, photos); usage information (feature use, activity logs, login history); device and technical information (IP address, device type, browser); and user-generated community content. You are responsible for what you share publicly.` },
+            { title: "4. Why We Collect Information", content: `We collect information to: provide and improve the Services; personalise your recovery experience; maintain community safety through moderation; detect fraud and unauthorised access; comply with legal obligations; and collect anonymised analytics (app opens, panic button activations) for platform improvement. We do not sell this data or share it for advertising.` },
+            { title: "5. Community Chat Moderation", content: `Community messages may be automatically screened using keyword detection systems and reviewed by human moderators. Messages violating Community Guidelines may be removed. Chat messages are automatically deleted after 30 days as a data minimisation measure (subject to safety, legal, or dispute resolution requirements). Moderation is conducted to protect users and maintain platform safety.` },
+            { title: "6. Data Storage & Security", content: `Your data is stored via Supabase (authentication, database, storage) on Amazon Web Services infrastructure in Sydney, Australia (ap-southeast-2). We use encryption in transit, secure authentication, access controls, and monitoring. No method of storage is completely secure and we cannot guarantee absolute security.` },
+            { title: "7. Third-Party Services", content: `We use: Supabase (auth, database, storage); Amazon Web Services (infrastructure through Supabase); Last.fm API (music recommendations — artist names only, no personal data); Vercel (hosting and deployment).` },
+            { title: "8. Cookies & Local Storage", content: `We do not use advertising cookies. We use localStorage for session persistence, user preferences, and platform functionality. Disabling local storage may affect app functionality.` },
+            { title: "9. Push Notifications", content: `We may provide optional push notifications for recovery reminders, payday alerts, milestone celebrations, and progress updates. You can enable or disable notifications through your device settings. Notification content is not shared with third parties.` },
+            { title: "10. Data Retention", content: `User data is retained while your account is active. When deleted, personal information is removed within a reasonable period unless retention is required by law, safety obligations, or dispute resolution. Community chat messages are deleted after 30 days automatically.` },
+            { title: "11. Your Privacy Rights", content: `Australian users have rights under the Privacy Act 1988 (Cth) including access, correction, and deletion rights. You can delete your account directly in the app. If unsatisfied with our response to a privacy complaint, you may contact the OAIC at www.oaic.gov.au. GDPR rights apply where applicable.` },
+            { title: "12. Children's Privacy", content: `Beat the Bet is for users aged 18 and over. We do not knowingly collect information from anyone under 18. If we become aware of such collection, we will delete the information and terminate the account.` },
+            { title: "13. Contact Us", content: `For privacy questions, requests, or complaints: beatthebetadmin@gmail.com. For privacy-related requests, please include information to verify your identity. Further business details are available upon reasonable request.` },
+            { title: "14. Consent & Lawful Processing", content: `By using the Services you consent to collection and use of your information as described here. Some processing is on the basis of legitimate interest (security, moderation, fraud prevention). You may object to legitimate-interest processing by contacting beatthebetadmin@gmail.com.` },
+          ].map((section, i) => (
+            <div key={i} className="bg-white rounded-xl shadow-sm p-5">
+              <h2 className="font-bold text-gray-900 mb-3">{section.title}</h2>
+              <p className="text-gray-600 leading-relaxed">{section.content}</p>
+            </div>
+          ))}
+
+          <p className="text-center text-xs text-gray-400 py-4">© 2026 Beat the Bet. All rights reserved.</p>
+        </div>
+      </div>
+    </div>
+  );
+
+  // ============================================================
+  // Terms of Service Page
+  // ============================================================
+  const TermsOfServicePage = () => (
+    <div className="flex flex-col min-h-screen bg-gray-50 pb-20">
+      <div className="bg-gray-900 text-white p-6">
+        <button onClick={() => setActiveTool(null)} className="flex items-center mb-4 hover:opacity-80">
+          <ArrowLeft className="w-5 h-5 mr-2" /><span>Back</span>
+        </button>
+        <h1 className="text-2xl font-bold">Terms of Service</h1>
+        <p className="text-sm opacity-70">Version 1.0 · Effective 1 June 2026</p>
+      </div>
+      <div className="flex-1 p-6 overflow-y-auto">
+        <div className="max-w-2xl mx-auto space-y-6 text-gray-700 text-sm leading-relaxed">
+
+          {[
+            { title: "1. Acceptance of These Terms", content: `By creating an account or using Beat the Bet (available at btb1.vercel.app), you agree to these Terms of Service. If you do not agree, do not use the Services. By using the Services, you also acknowledge the Beat the Bet Privacy Policy.` },
+            { title: "2. About the Service", content: `Beat the Bet is an Australian peer-support and recovery platform provided free of charge. It is not a medical, healthcare, counselling, psychiatric, or crisis service. Nothing in the app constitutes professional advice. Seek qualified help where appropriate. Beat the Bet is not monitored as an emergency service — if you are in crisis, contact emergency services immediately.` },
+            { title: "3. Eligibility", content: `You must be at least 18 years old to use the Services. By registering, you confirm you are 18 or over. Each person may hold only one account. You must not use the Services to harm, exploit, or manipulate other users.` },
+            { title: "4. User Accounts", content: `You are responsible for keeping your account credentials confidential and for all activity under your account. Notify us immediately of unauthorised access. Provide accurate information. Usernames must not be offensive, impersonate others, or mislead users about your identity.` },
+            { title: "5. Community Standards", content: `You may discuss recovery experiences, urges, coping strategies, progress, and encouragement. You must not post gambling promotions, betting tips, scams, personal contact details, harassment, abuse, or content that undermines others' recovery. No links or images in community chat (photo uploads are available in Why I'm Quitting). No direct messaging between users.` },
+            { title: "6. Content & Moderation", content: `All community content is subject to moderation using automated detection and human review. Flagged content may be hidden, removed, or escalated. Beat the Bet has sole discretion over moderation decisions and is not obligated to explain them. Chat messages are automatically deleted after 30 days.` },
+            { title: "7. Prohibited Conduct", content: `You must not: promote gambling; solicit money or loans; engage in scams or fraud; harass or exploit users; impersonate others; attempt to bypass moderation; share external contact details; interfere with the platform (including scraping or unauthorised access); or engage in predatory behaviour toward vulnerable users.` },
+            { title: "8. Intellectual Property", content: `All rights in the Services (software, branding, design, content) belong to Beat the Bet or its licensors. You retain ownership of content you submit, but grant Beat the Bet a non-exclusive worldwide licence to store, display, process, and moderate it for the purpose of operating the Services.` },
+            { title: "9. Privacy", content: `Your use is governed by the Beat the Bet Privacy Policy. By using the Services, you consent to data handling as described in the Privacy Policy. Contact beatthebetadmin@gmail.com for privacy enquiries.` },
+            { title: "10. Third-Party Services", content: `The app uses Supabase, Vercel, Last.fm, and Amazon Web Services (AWS). Beat the Bet is not responsible for third-party service outages, failures, or security incidents beyond its reasonable control.` },
+            { title: "11. Disclaimers", content: `The Services are provided "as is" and "as available". Beat the Bet makes no guarantees about accuracy, availability, or recovery outcomes. Community content is user-generated and not endorsed by Beat the Bet. Nothing in the Services constitutes medical, legal, or financial advice.` },
+            { title: "12. Limitation of Liability", content: `To the maximum extent permitted by Australian law, Beat the Bet is not liable for indirect, consequential, or incidental loss, loss of data, financial loss, or emotional distress arising from use of the Services. Nothing excludes rights that cannot lawfully be excluded under Australian consumer law.` },
+            { title: "13. Account Suspension & Termination", content: `Beat the Bet may suspend or terminate accounts that violate these Terms. We reserve the right to archive inactive accounts with reasonable notice. You may delete your account at any time through the in-app account deletion feature. Termination may result in loss of access to account data and features.` },
+            { title: "14. Changes to These Terms", content: `We may update these Terms. Where material changes are made, we will notify users through the app or other appropriate means. Continued use after an update constitutes acceptance. If you disagree with revised Terms, stop using the Services.` },
+            { title: "15. Governing Law", content: `These Terms are governed by the laws of New South Wales, Australia. You submit to the non-exclusive jurisdiction of the courts of New South Wales.` },
+            { title: "16. Contact", content: `Beat the Bet is operated by an Australian sole trader. For enquiries, support, or legal notices: beatthebetadmin@gmail.com. Further business details are available upon reasonable request.` },
+          ].map((section, i) => (
+            <div key={i} className="bg-white rounded-xl shadow-sm p-5">
+              <h2 className="font-bold text-gray-900 mb-3">{section.title}</h2>
+              <p className="text-gray-600 leading-relaxed">{section.content}</p>
+            </div>
+          ))}
+
+          <p className="text-center text-xs text-gray-400 py-4">© 2026 Beat the Bet. All rights reserved.</p>
+        </div>
+      </div>
+    </div>
+  );
 
   // Show auth screens if not authenticated
   if (!isAuthenticated) {
