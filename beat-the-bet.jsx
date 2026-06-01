@@ -296,6 +296,421 @@ const supabase = (() => {
  * financial stability and savings, not consumption.
  */
 
+
+function AdminPanel({ adminEmails, setAdminEmails, setActiveTool, showSuccess, showError, validators }) {
+  const [criticalQueue, setCriticalQueue] = React.useState([]);
+  const [highQueue, setHighQueue] = React.useState([]);
+  const [supportQueue, setSupportQueue] = React.useState([]);
+  const [userStats, setUserStats] = React.useState(null);
+  const [localAdminEmails, setLocalAdminEmails] = React.useState(adminEmails);
+  const [loading, setLoading] = React.useState(false);
+  const [loaded, setLoaded] = React.useState(false);
+  const [loadError, setLoadError] = React.useState('');
+  const [newAdminEmail, setNewAdminEmail] = React.useState('');
+  const [activeAdminTab, setActiveAdminTab] = React.useState('critical');
+  const isFetching = React.useRef(false);
+
+  const CACHE_KEY = 'btb_admin_cache';
+
+  // Load from sessionStorage cache instantly on mount
+  React.useEffect(() => {
+    try {
+      const cached = sessionStorage.getItem(CACHE_KEY);
+      if (cached) {
+        const c = JSON.parse(cached);
+        if (c.criticalQueue) setCriticalQueue(c.criticalQueue);
+        if (c.highQueue) setHighQueue(c.highQueue);
+        if (c.supportQueue) setSupportQueue(c.supportQueue);
+        if (c.userStats) setUserStats(c.userStats);
+        if (c.adminEmails) setLocalAdminEmails(c.adminEmails);
+        setLoaded(true);
+        return; // Don't fetch again - user can hit Refresh manually
+      }
+    } catch (e) {}
+    // No cache - do initial load
+    loadData();
+  }, []);
+
+  const loadData = React.useCallback(async () => {
+    if (isFetching.current) return;
+    isFetching.current = true;
+    setLoading(true);
+    setLoadError('');
+
+    const session = supabase.getSession();
+    if (!session) {
+      setLoading(false);
+      isFetching.current = false;
+      setLoadError('Not logged in.');
+      return;
+    }
+
+    const token = session.access_token;
+    const h = { 'apikey': SUPABASE_ANON_KEY, 'Authorization': `Bearer ${token}` };
+    const safe = (promise) => promise.catch(() => ({ ok: false, data: [] }));
+
+    try {
+      const [critRes, highRes, suppRes, usersRes, adminsRes] = await Promise.all([
+        safe(fetch(`${SUPABASE_URL}/rest/v1/messages?flagged=eq.true&moderation_level=eq.critical&reviewed=eq.false&order=created_at.desc&limit=50`, { headers: h }).then(async r => ({ ok: r.ok, data: await r.json() }))),
+        safe(fetch(`${SUPABASE_URL}/rest/v1/messages?flagged=eq.true&moderation_level=eq.high&reviewed=eq.false&order=created_at.desc&limit=50`, { headers: h }).then(async r => ({ ok: r.ok, data: await r.json() }))),
+        safe(fetch(`${SUPABASE_URL}/rest/v1/messages?moderation_level=eq.support&reviewed=eq.false&order=created_at.desc&limit=50`, { headers: h }).then(async r => ({ ok: r.ok, data: await r.json() }))),
+        safe(fetch(`${SUPABASE_URL}/rest/v1/profiles?select=id,username,created_at,points,level&order=created_at.desc&limit=100`, { headers: h }).then(async r => ({ ok: r.ok, data: await r.json() }))),
+        safe(fetch(`${SUPABASE_URL}/rest/v1/admins?select=email,added_at&order=added_at.asc`, { headers: h }).then(async r => ({ ok: r.ok, data: await r.json() }))),
+      ]);
+
+      const crit = critRes.ok && Array.isArray(critRes.data) ? critRes.data : [];
+      const high = highRes.ok && Array.isArray(highRes.data) ? highRes.data : [];
+      const supp = suppRes.ok && Array.isArray(suppRes.data) ? suppRes.data : [];
+      const users = usersRes.ok && Array.isArray(usersRes.data) ? usersRes.data : [];
+      const admins = adminsRes.ok && Array.isArray(adminsRes.data) ? adminsRes.data.map(a => a.email) : localAdminEmails;
+
+      setCriticalQueue(crit);
+      setHighQueue(high);
+      setSupportQueue(supp);
+      setUserStats({ total: users.length, users });
+      setLocalAdminEmails(admins);
+      setAdminEmails(admins);
+      localStorage.setItem('adminEmails', JSON.stringify(admins));
+
+      // Cache to sessionStorage so remounts don't re-fetch
+      try {
+        sessionStorage.setItem(CACHE_KEY, JSON.stringify({
+          criticalQueue: crit, highQueue: high, supportQueue: supp,
+          userStats: { total: users.length, users }, adminEmails: admins
+        }));
+      } catch (e) {}
+
+      if (!critRes.ok && !highRes.ok) {
+        setLoadError('Could not load messages. Make sure admin_fix.sql has been run.');
+      }
+    } catch (e) {
+      setLoadError(`Error: ${e.message}`);
+    } finally {
+      isFetching.current = false;
+      setLoading(false);
+      setLoaded(true);
+    }
+  }, []);
+
+  const approveMessage = async (msg) => {
+    const session = supabase.getSession();
+    if (!session) return;
+    await fetch(`${SUPABASE_URL}/rest/v1/messages?id=eq.${msg.id}`, {
+      method: 'PATCH',
+      headers: { 'apikey': SUPABASE_ANON_KEY, 'Authorization': `Bearer ${session.access_token}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ flagged: false, reviewed: true })
+    });
+    setCriticalQueue(p => p.filter(m => m.id !== msg.id));
+    setHighQueue(p => p.filter(m => m.id !== msg.id));
+    setSupportQueue(p => p.filter(m => m.id !== msg.id));
+    showSuccess('Message restored.');
+  };
+
+  const deleteMessage = async (msg) => {
+    const session = supabase.getSession();
+    if (!session) return;
+    await fetch(`${SUPABASE_URL}/rest/v1/messages?id=eq.${msg.id}`, {
+      method: 'DELETE',
+      headers: { 'apikey': SUPABASE_ANON_KEY, 'Authorization': `Bearer ${session.access_token}` }
+    });
+    setCriticalQueue(p => p.filter(m => m.id !== msg.id));
+    setHighQueue(p => p.filter(m => m.id !== msg.id));
+    setSupportQueue(p => p.filter(m => m.id !== msg.id));
+    showSuccess('Message deleted.');
+  };
+
+  const addAdminEmail = async () => {
+    const trimmed = newAdminEmail.trim().toLowerCase();
+    if (!trimmed || !validators.email(trimmed)) { showError('Enter a valid email.'); return; }
+    if (localAdminEmails.includes(trimmed)) { showError('Already an admin.'); return; }
+    const session = supabase.getSession();
+    try {
+      const res = await fetch(`${SUPABASE_URL}/rest/v1/admins`, {
+        method: 'POST',
+        headers: { 'apikey': SUPABASE_ANON_KEY, 'Authorization': `Bearer ${session.access_token}`, 'Content-Type': 'application/json', 'Prefer': 'return=representation' },
+        body: JSON.stringify({ email: trimmed })
+      });
+      if (!res.ok) { const e = await res.json().catch(() => ({})); showError(e.message || 'Failed to add admin.'); return; }
+      const updated = [...localAdminEmails, trimmed];
+      setLocalAdminEmails(updated);
+      setAdminEmails(updated);
+      localStorage.setItem('adminEmails', JSON.stringify(updated));
+      setNewAdminEmail('');
+      showSuccess(`${trimmed} added as admin.`);
+    } catch (e) { showError('Failed to add admin.'); }
+  };
+
+  const removeAdminEmail = async (email) => {
+    const session = supabase.getSession();
+    if (session && session.user.email.toLowerCase() === email.toLowerCase()) { showError("You can't remove yourself."); return; }
+    try {
+      await fetch(`${SUPABASE_URL}/rest/v1/admins?email=eq.${encodeURIComponent(email)}`, {
+        method: 'DELETE',
+        headers: { 'apikey': SUPABASE_ANON_KEY, 'Authorization': `Bearer ${session.access_token}` }
+      });
+      const updated = localAdminEmails.filter(e => e !== email);
+      setLocalAdminEmails(updated);
+      setAdminEmails(updated);
+      localStorage.setItem('adminEmails', JSON.stringify(updated));
+      showSuccess('Admin removed.');
+    } catch (e) { showError('Failed to remove admin.'); }
+  };
+
+  const formatDate = (ts) => new Date(ts).toLocaleDateString('en-AU', { day: 'numeric', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' });
+
+  const QueueView = ({ msgs, type }) => {
+    const borderMap = { critical: 'border-red-400', high: 'border-orange-400', support: 'border-blue-400' };
+    const labelMap = {
+      critical: 'Auto-hidden — requires review',
+      high: 'Flagged — visible to users, needs review',
+      support: 'Support queue — user may need help'
+    };
+    const bgMap = { critical: 'bg-red-50 text-red-800', high: 'bg-orange-50 text-orange-800', support: 'bg-blue-50 text-blue-800' };
+    return (
+      <div className="space-y-4">
+        <div className={`rounded-lg p-3 text-sm font-medium ${bgMap[type]}`}>
+          {labelMap[type]} · {msgs.length} item{msgs.length !== 1 ? 's' : ''}
+        </div>
+        {msgs.length === 0 && <p className="text-center text-gray-400 py-8">Nothing in this queue.</p>}
+        {msgs.map(msg => (
+          <div key={msg.id} className={`bg-white rounded-xl shadow-md p-5 border-l-4 ${borderMap[type]}`}>
+            <div className="flex items-start justify-between mb-2">
+              <div>
+                <p className="font-semibold text-gray-800">{msg.username}</p>
+                <p className="text-xs text-gray-400">{formatDate(msg.created_at)} · #{msg.room}</p>
+              </div>
+              {msg.moderation_score && (
+                <span className="text-xs bg-gray-100 text-gray-600 px-2 py-1 rounded-full">{msg.moderation_score}% confidence</span>
+              )}
+            </div>
+            <p className="text-gray-700 bg-gray-50 rounded-lg p-3 mb-2 text-sm">{msg.message}</p>
+            {msg.moderation_reason && <p className="text-xs text-gray-500 mb-1"><strong>Reason:</strong> {msg.moderation_reason}</p>}
+            {msg.moderation_matched && <p className="text-xs text-gray-500 mb-3"><strong>Matched:</strong> "{msg.moderation_matched}"</p>}
+            <div className="flex gap-2">
+              <button onClick={() => approveMessage(msg)} className={`flex-1 ${type === 'support' ? 'bg-blue-500 hover:bg-blue-600' : 'bg-green-500 hover:bg-green-600'} text-white rounded-lg py-2 font-semibold text-sm`}>
+                {type === 'support' ? 'Mark Reviewed' : 'Restore'}
+              </button>
+              <button onClick={() => deleteMessage(msg)} className="flex-1 bg-red-500 hover:bg-red-600 text-white rounded-lg py-2 font-semibold text-sm">Delete</button>
+            </div>
+          </div>
+        ))}
+      </div>
+    );
+  };
+
+  return (
+    <div className="flex flex-col min-h-screen bg-gray-50 pb-20">
+      <div className="bg-gray-900 text-white p-6">
+        <button onClick={() => setActiveTool(null)} className="flex items-center mb-4 hover:opacity-80">
+          <ArrowLeft className="w-5 h-5 mr-2" /><span>Back</span>
+        </button>
+        <h1 className="text-2xl font-bold">Admin Panel</h1>
+        <p className="text-sm opacity-70">Beat the Bet — moderation & management</p>
+      </div>
+
+      <div className="bg-white border-b border-gray-200 px-4 py-3">
+        <div className="flex gap-2 overflow-x-auto">
+          {[
+            { id: 'critical', label: `Critical (${criticalQueue.length})`, color: 'bg-red-600' },
+            { id: 'high', label: `High (${highQueue.length})`, color: 'bg-orange-500' },
+            { id: 'support', label: `Support (${supportQueue.length})`, color: 'bg-blue-500' },
+            { id: 'users', label: `Users (${userStats?.total ?? '—'})`, color: null },
+            { id: 'admins', label: 'Admins', color: null },
+          ].map(tab => (
+            <button key={tab.id} onClick={() => setActiveAdminTab(tab.id)}
+              className={`px-3 py-2 rounded-lg font-semibold text-xs whitespace-nowrap transition-colors ${activeAdminTab === tab.id ? (tab.color || 'bg-gray-900') + ' text-white' : 'bg-gray-100 text-gray-700 hover:bg-gray-200'}`}>
+              {tab.label}
+            </button>
+          ))}
+          <button onClick={() => { sessionStorage.removeItem('btb_admin_cache'); loadData(); }} disabled={loading} className="ml-auto px-3 py-2 rounded-lg text-xs bg-blue-100 text-blue-700 font-semibold disabled:opacity-50">
+            {loading ? '...' : 'Refresh'}
+          </button>
+        </div>
+      </div>
+
+      <div className="flex-1 p-6 overflow-y-auto">
+        <div className="max-w-2xl mx-auto">
+          {loading && !loaded && (
+            <div className="text-center py-12">
+              <div className="w-8 h-8 border-4 border-gray-200 border-t-gray-800 rounded-full animate-spin mx-auto mb-3"></div>
+              <p className="text-gray-500">Loading...</p>
+            </div>
+          )}
+          {loadError && (
+            <div className="bg-red-50 border-l-4 border-red-500 rounded-lg p-4 mb-4">
+              <p className="font-semibold text-red-800 mb-1">Error loading data</p>
+              <p className="text-sm text-red-700">{loadError}</p>
+              <button onClick={loadData} className="mt-2 bg-red-500 text-white px-4 py-2 rounded-lg text-sm font-semibold">Retry</button>
+            </div>
+          )}
+
+          {activeAdminTab === 'critical' && <QueueView msgs={criticalQueue} type="critical" />}
+          {activeAdminTab === 'high' && <QueueView msgs={highQueue} type="high" />}
+          {activeAdminTab === 'support' && <QueueView msgs={supportQueue} type="support" />}
+
+          {activeAdminTab === 'users' && (
+            <div className="space-y-3">
+              {userStats ? (
+                <>
+                  <div className="grid grid-cols-2 gap-4 mb-4">
+                    <div className="bg-white rounded-xl shadow-md p-5 text-center">
+                      <p className="text-3xl font-bold text-gray-800">{userStats.total}</p>
+                      <p className="text-sm text-gray-500">Total users</p>
+                    </div>
+                    <div className="bg-white rounded-xl shadow-md p-5 text-center">
+                      <p className="text-3xl font-bold text-blue-600">
+                        {userStats.users.filter(u => (new Date() - new Date(u.created_at)) < 7*24*60*60*1000).length}
+                      </p>
+                      <p className="text-sm text-gray-500">New this week</p>
+                    </div>
+                  </div>
+                  <h3 className="font-bold text-gray-800">All users</h3>
+                  {userStats.users.map(user => (
+                    <div key={user.id} className="bg-white rounded-xl shadow-sm p-4 flex items-center justify-between">
+                      <div>
+                        <p className="font-semibold text-gray-800">{user.username || 'No username'}</p>
+                        <p className="text-xs text-gray-400">{formatDate(user.created_at)}</p>
+                      </div>
+                      <div className="text-right">
+                        <p className="text-sm font-semibold text-purple-600">Lvl {user.level}</p>
+                        <p className="text-xs text-gray-400">{user.points} pts</p>
+                      </div>
+                    </div>
+                  ))}
+                </>
+              ) : (
+                <p className="text-center text-gray-400 py-8">Loading users...</p>
+              )}
+            </div>
+          )}
+
+          {activeAdminTab === 'admins' && (
+            <div className="space-y-4">
+              <div className="bg-white rounded-xl shadow-md p-5">
+                <h3 className="font-bold text-gray-800 mb-4">Admin Accounts</h3>
+                <div className="space-y-2 mb-4">
+                  {localAdminEmails.map(email => (
+                    <div key={email} className="flex items-center justify-between p-3 bg-gray-50 rounded-lg">
+                      <span className="text-sm font-medium text-gray-800">{email}</span>
+                      <button onClick={() => removeAdminEmail(email)} className="text-red-400 hover:text-red-600 text-sm font-semibold">Remove</button>
+                    </div>
+                  ))}
+                </div>
+                <div className="border-t border-gray-200 pt-4">
+                  <p className="text-sm font-semibold text-gray-700 mb-2">Add admin email</p>
+                  <div className="flex gap-2">
+                    <input type="email" value={newAdminEmail} onChange={(e) => setNewAdminEmail(e.target.value)}
+                      onKeyPress={(e) => e.key === 'Enter' && addAdminEmail()}
+                      placeholder="email@example.com"
+                      className="flex-1 p-2.5 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-gray-800" />
+                    <button onClick={addAdminEmail} className="bg-gray-900 hover:bg-gray-700 text-white px-4 rounded-lg font-semibold text-sm">Add</button>
+                  </div>
+                </div>
+              </div>
+              <div className="bg-yellow-50 border-l-4 border-yellow-500 rounded-lg p-4">
+                <p className="text-sm text-gray-700 mb-1">Add an email to grant admin access. The user must have signed up first.</p>
+                <p className="text-xs text-gray-500">After adding, run in Supabase SQL Editor:</p>
+                <code className="block text-xs bg-white rounded p-2 mt-1 text-gray-700 select-all">
+                  {"update public.admins a set user_id = u.id from auth.users u where lower(u.email) = lower(a.email);"}
+                </code>
+              </div>
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+};
+
+
+// ============================================================
+// Privacy Policy Page
+// ============================================================
+const PrivacyPolicyPage = () => (
+  <div className="flex flex-col min-h-screen bg-gray-50 pb-20">
+    <div className="bg-gray-900 text-white p-6">
+      <button onClick={() => setActiveTool(null)} className="flex items-center mb-4 hover:opacity-80">
+        <ArrowLeft className="w-5 h-5 mr-2" /><span>Back</span>
+      </button>
+      <h1 className="text-2xl font-bold">Privacy Policy</h1>
+      <p className="text-sm opacity-70">Version 1.0 · Last updated 1 June 2026</p>
+    </div>
+    <div className="flex-1 p-6 overflow-y-auto">
+      <div className="max-w-2xl mx-auto space-y-6 text-gray-700 text-sm leading-relaxed">
+
+        {[
+          { title: "1. About Beat the Bet", content: `Beat the Bet is an Australian-based gambling addiction recovery and support platform. Beat the Bet is operated by an Australian sole trader. All enquiries may be directed to beatthebetadmin@gmail.com. Further business details are available upon reasonable request.` },
+          { title: "2. Important Disclaimer", content: `Beat the Bet is a peer-support and recovery platform — not a medical, counselling, crisis, financial, or legal service. The Services are not a substitute for professional help. The platform may surface crisis resources where distress is detected; this does not constitute clinical assessment or intervention. If you are in crisis, contact emergency services immediately.` },
+          { title: "3. Information We Collect", content: `We collect: account information (email, username, password); recovery content (journal entries, timer data, milestones, chat messages, photos); usage information (feature use, activity logs, login history); device and technical information (IP address, device type, browser); and user-generated community content. You are responsible for what you share publicly.` },
+          { title: "4. Why We Collect Information", content: `We collect information to: provide and improve the Services; personalise your recovery experience; maintain community safety through moderation; detect fraud and unauthorised access; comply with legal obligations; and collect anonymised analytics (app opens, panic button activations) for platform improvement. We do not sell this data or share it for advertising.` },
+          { title: "5. Community Chat Moderation", content: `Community messages may be automatically screened using keyword detection systems and reviewed by human moderators. Messages violating Community Guidelines may be removed. Chat messages are automatically deleted after 30 days as a data minimisation measure (subject to safety, legal, or dispute resolution requirements). Moderation is conducted to protect users and maintain platform safety.` },
+          { title: "6. Data Storage & Security", content: `Your data is stored via Supabase (authentication, database, storage) on Amazon Web Services infrastructure in Sydney, Australia (ap-southeast-2). We use encryption in transit, secure authentication, access controls, and monitoring. No method of storage is completely secure and we cannot guarantee absolute security.` },
+          { title: "7. Third-Party Services", content: `We use: Supabase (auth, database, storage); Amazon Web Services (infrastructure through Supabase); Last.fm API (music recommendations — artist names only, no personal data); Vercel (hosting and deployment).` },
+          { title: "8. Cookies & Local Storage", content: `We do not use advertising cookies. We use localStorage for session persistence, user preferences, and platform functionality. Disabling local storage may affect app functionality.` },
+          { title: "9. Push Notifications", content: `We may provide optional push notifications for recovery reminders, payday alerts, milestone celebrations, and progress updates. You can enable or disable notifications through your device settings. Notification content is not shared with third parties.` },
+          { title: "10. Data Retention", content: `User data is retained while your account is active. When deleted, personal information is removed within a reasonable period unless retention is required by law, safety obligations, or dispute resolution. Community chat messages are deleted after 30 days automatically.` },
+          { title: "11. Your Privacy Rights", content: `Australian users have rights under the Privacy Act 1988 (Cth) including access, correction, and deletion rights. You can delete your account directly in the app. If unsatisfied with our response to a privacy complaint, you may contact the OAIC at www.oaic.gov.au. GDPR rights apply where applicable.` },
+          { title: "12. Children's Privacy", content: `Beat the Bet is for users aged 18 and over. We do not knowingly collect information from anyone under 18. If we become aware of such collection, we will delete the information and terminate the account.` },
+          { title: "13. Contact Us", content: `For privacy questions, requests, or complaints: beatthebetadmin@gmail.com. For privacy-related requests, please include information to verify your identity. Further business details are available upon reasonable request.` },
+          { title: "14. Consent & Lawful Processing", content: `By using the Services you consent to collection and use of your information as described here. Some processing is on the basis of legitimate interest (security, moderation, fraud prevention). You may object to legitimate-interest processing by contacting beatthebetadmin@gmail.com.` },
+        ].map((section, i) => (
+          <div key={i} className="bg-white rounded-xl shadow-sm p-5">
+            <h2 className="font-bold text-gray-900 mb-3">{section.title}</h2>
+            <p className="text-gray-600 leading-relaxed">{section.content}</p>
+          </div>
+        ))}
+
+        <p className="text-center text-xs text-gray-400 py-4">© 2026 Beat the Bet. All rights reserved.</p>
+      </div>
+    </div>
+  </div>
+);
+
+// ============================================================
+// Terms of Service Page
+// ============================================================
+const TermsOfServicePage = () => (
+  <div className="flex flex-col min-h-screen bg-gray-50 pb-20">
+    <div className="bg-gray-900 text-white p-6">
+      <button onClick={() => setActiveTool(null)} className="flex items-center mb-4 hover:opacity-80">
+        <ArrowLeft className="w-5 h-5 mr-2" /><span>Back</span>
+      </button>
+      <h1 className="text-2xl font-bold">Terms of Service</h1>
+      <p className="text-sm opacity-70">Version 1.0 · Effective 1 June 2026</p>
+    </div>
+    <div className="flex-1 p-6 overflow-y-auto">
+      <div className="max-w-2xl mx-auto space-y-6 text-gray-700 text-sm leading-relaxed">
+
+        {[
+          { title: "1. Acceptance of These Terms", content: `By creating an account or using Beat the Bet (available at btb1.vercel.app), you agree to these Terms of Service. If you do not agree, do not use the Services. By using the Services, you also acknowledge the Beat the Bet Privacy Policy.` },
+          { title: "2. About the Service", content: `Beat the Bet is an Australian peer-support and recovery platform provided free of charge. It is not a medical, healthcare, counselling, psychiatric, or crisis service. Nothing in the app constitutes professional advice. Seek qualified help where appropriate. Beat the Bet is not monitored as an emergency service — if you are in crisis, contact emergency services immediately.` },
+          { title: "3. Eligibility", content: `You must be at least 18 years old to use the Services. By registering, you confirm you are 18 or over. Each person may hold only one account. You must not use the Services to harm, exploit, or manipulate other users.` },
+          { title: "4. User Accounts", content: `You are responsible for keeping your account credentials confidential and for all activity under your account. Notify us immediately of unauthorised access. Provide accurate information. Usernames must not be offensive, impersonate others, or mislead users about your identity.` },
+          { title: "5. Community Standards", content: `You may discuss recovery experiences, urges, coping strategies, progress, and encouragement. You must not post gambling promotions, betting tips, scams, personal contact details, harassment, abuse, or content that undermines others' recovery. No links or images in community chat (photo uploads are available in Why I'm Quitting). No direct messaging between users.` },
+          { title: "6. Content & Moderation", content: `All community content is subject to moderation using automated detection and human review. Flagged content may be hidden, removed, or escalated. Beat the Bet has sole discretion over moderation decisions and is not obligated to explain them. Chat messages are automatically deleted after 30 days.` },
+          { title: "7. Prohibited Conduct", content: `You must not: promote gambling; solicit money or loans; engage in scams or fraud; harass or exploit users; impersonate others; attempt to bypass moderation; share external contact details; interfere with the platform (including scraping or unauthorised access); or engage in predatory behaviour toward vulnerable users.` },
+          { title: "8. Intellectual Property", content: `All rights in the Services (software, branding, design, content) belong to Beat the Bet or its licensors. You retain ownership of content you submit, but grant Beat the Bet a non-exclusive worldwide licence to store, display, process, and moderate it for the purpose of operating the Services.` },
+          { title: "9. Privacy", content: `Your use is governed by the Beat the Bet Privacy Policy. By using the Services, you consent to data handling as described in the Privacy Policy. Contact beatthebetadmin@gmail.com for privacy enquiries.` },
+          { title: "10. Third-Party Services", content: `The app uses Supabase, Vercel, Last.fm, and Amazon Web Services (AWS). Beat the Bet is not responsible for third-party service outages, failures, or security incidents beyond its reasonable control.` },
+          { title: "11. Disclaimers", content: `The Services are provided "as is" and "as available". Beat the Bet makes no guarantees about accuracy, availability, or recovery outcomes. Community content is user-generated and not endorsed by Beat the Bet. Nothing in the Services constitutes medical, legal, or financial advice.` },
+          { title: "12. Limitation of Liability", content: `To the maximum extent permitted by Australian law, Beat the Bet is not liable for indirect, consequential, or incidental loss, loss of data, financial loss, or emotional distress arising from use of the Services. Nothing excludes rights that cannot lawfully be excluded under Australian consumer law.` },
+          { title: "13. Account Suspension & Termination", content: `Beat the Bet may suspend or terminate accounts that violate these Terms. We reserve the right to archive inactive accounts with reasonable notice. You may delete your account at any time through the in-app account deletion feature. Termination may result in loss of access to account data and features.` },
+          { title: "14. Changes to These Terms", content: `We may update these Terms. Where material changes are made, we will notify users through the app or other appropriate means. Continued use after an update constitutes acceptance. If you disagree with revised Terms, stop using the Services.` },
+          { title: "15. Governing Law", content: `These Terms are governed by the laws of New South Wales, Australia. You submit to the non-exclusive jurisdiction of the courts of New South Wales.` },
+          { title: "16. Contact", content: `Beat the Bet is operated by an Australian sole trader. For enquiries, support, or legal notices: beatthebetadmin@gmail.com. Further business details are available upon reasonable request.` },
+        ].map((section, i) => (
+          <div key={i} className="bg-white rounded-xl shadow-sm p-5">
+            <h2 className="font-bold text-gray-900 mb-3">{section.title}</h2>
+            <p className="text-gray-600 leading-relaxed">{section.content}</p>
+          </div>
+        ))}
+
+        <p className="text-center text-xs text-gray-400 py-4">© 2026 Beat the Bet. All rights reserved.</p>
+      </div>
+    </div>
+  </div>
+);
+
 export default function BeatTheBet() {
   // Admin access
   const [isAdminUser, setIsAdminUser] = React.useState(false);
@@ -2001,7 +2416,7 @@ export default function BeatTheBet() {
     if (activeTool === 'music-discovery') return <MusicDiscoveryPage />;
     if (activeTool === 'why-quitting') return <WhyImQuittingPage />;
     if (activeTool === 'settings') return <SettingsPage />;
-    if (activeTool === 'admin') return isAdmin() ? <AdminPanel /> : <div className='p-8 text-center text-gray-500'>Access denied.</div>;
+    if (activeTool === 'admin') return isAdmin() ? <AdminPanel adminEmails={adminEmails} setAdminEmails={setAdminEmails} setActiveTool={setActiveTool} showSuccess={showSuccess} showError={showError} validators={validators} /> : <div className='p-8 text-center text-gray-500'>Access denied.</div>;
     if (activeTool === 'privacy') return <PrivacyPolicyPage />;
     if (activeTool === 'terms') return <TermsOfServicePage />;
     if (activeTool === 'nearby') return <NearbyPage />;
@@ -8888,395 +9303,7 @@ Keep going! Every day counts. 💪
 
 
 
-  const AdminPanel = React.memo(() => {
-    const [criticalQueue, setCriticalQueue] = React.useState([]);
-    const [highQueue, setHighQueue] = React.useState([]);
-    const [supportQueue, setSupportQueue] = React.useState([]);
-    const [userStats, setUserStats] = React.useState(null);
-    const [localAdminEmails, setLocalAdminEmails] = React.useState(adminEmails);
-    const [loading, setLoading] = React.useState(false);
-    const [loaded, setLoaded] = React.useState(false);
-    const [loadError, setLoadError] = React.useState('');
-    const [newAdminEmail, setNewAdminEmail] = React.useState('');
-    const [activeAdminTab, setActiveAdminTab] = React.useState('critical');
-    const isFetching = React.useRef(false);
 
-    const loadData = React.useCallback(async () => {
-      if (isFetching.current) return;
-      isFetching.current = true;
-      setLoading(true);
-      setLoadError('');
-
-      const session = supabase.getSession();
-      if (!session) {
-        setLoading(false);
-        isFetching.current = false;
-        setLoadError('Not logged in.');
-        return;
-      }
-
-      const token = session.access_token;
-      const h = { 'apikey': SUPABASE_ANON_KEY, 'Authorization': `Bearer ${token}` };
-
-      const safe = (promise) => promise.catch(() => ({ ok: false, data: [] }));
-
-      try {
-        const [critRes, highRes, suppRes, usersRes, adminsRes] = await Promise.all([
-          safe(fetch(`${SUPABASE_URL}/rest/v1/messages?flagged=eq.true&moderation_level=eq.critical&reviewed=eq.false&order=created_at.desc&limit=50`, { headers: h }).then(async r => ({ ok: r.ok, data: await r.json() }))),
-          safe(fetch(`${SUPABASE_URL}/rest/v1/messages?flagged=eq.true&moderation_level=eq.high&reviewed=eq.false&order=created_at.desc&limit=50`, { headers: h }).then(async r => ({ ok: r.ok, data: await r.json() }))),
-          safe(fetch(`${SUPABASE_URL}/rest/v1/messages?moderation_level=eq.support&reviewed=eq.false&order=created_at.desc&limit=50`, { headers: h }).then(async r => ({ ok: r.ok, data: await r.json() }))),
-          safe(fetch(`${SUPABASE_URL}/rest/v1/profiles?select=id,username,created_at,points,level&order=created_at.desc&limit=100`, { headers: h }).then(async r => ({ ok: r.ok, data: await r.json() }))),
-          safe(fetch(`${SUPABASE_URL}/rest/v1/admins?select=email,added_at&order=added_at.asc`, { headers: h }).then(async r => ({ ok: r.ok, data: await r.json() }))),
-        ]);
-
-        if (critRes.ok) setCriticalQueue(Array.isArray(critRes.data) ? critRes.data : []);
-        if (highRes.ok) setHighQueue(Array.isArray(highRes.data) ? highRes.data : []);
-        if (suppRes.ok) setSupportQueue(Array.isArray(suppRes.data) ? suppRes.data : []);
-        if (usersRes.ok) {
-          const u = Array.isArray(usersRes.data) ? usersRes.data : [];
-          setUserStats({ total: u.length, users: u });
-        }
-        if (adminsRes.ok && Array.isArray(adminsRes.data)) {
-          const emails = adminsRes.data.map(a => a.email);
-          setLocalAdminEmails(emails);
-          setAdminEmails(emails);
-          localStorage.setItem('adminEmails', JSON.stringify(emails));
-        }
-
-        if (!critRes.ok && !highRes.ok) {
-          setLoadError('Could not load messages. Make sure admin_fix.sql has been run in Supabase.');
-        }
-      } catch (e) {
-        setLoadError(`Error: ${e.message}`);
-      } finally {
-        isFetching.current = false;
-        setLoading(false);
-        setLoaded(true);
-      }
-    }, []);
-
-    React.useEffect(() => {
-      loadData();
-    }, []);
-
-    const approveMessage = async (msg) => {
-      const session = supabase.getSession();
-      if (!session) return;
-      await fetch(`${SUPABASE_URL}/rest/v1/messages?id=eq.${msg.id}`, {
-        method: 'PATCH',
-        headers: { 'apikey': SUPABASE_ANON_KEY, 'Authorization': `Bearer ${session.access_token}`, 'Content-Type': 'application/json' },
-        body: JSON.stringify({ flagged: false, reviewed: true })
-      });
-      setCriticalQueue(p => p.filter(m => m.id !== msg.id));
-      setHighQueue(p => p.filter(m => m.id !== msg.id));
-      setSupportQueue(p => p.filter(m => m.id !== msg.id));
-      showSuccess('Message restored.');
-    };
-
-    const deleteMessage = async (msg) => {
-      const session = supabase.getSession();
-      if (!session) return;
-      await fetch(`${SUPABASE_URL}/rest/v1/messages?id=eq.${msg.id}`, {
-        method: 'DELETE',
-        headers: { 'apikey': SUPABASE_ANON_KEY, 'Authorization': `Bearer ${session.access_token}` }
-      });
-      setCriticalQueue(p => p.filter(m => m.id !== msg.id));
-      setHighQueue(p => p.filter(m => m.id !== msg.id));
-      setSupportQueue(p => p.filter(m => m.id !== msg.id));
-      showSuccess('Message deleted.');
-    };
-
-    const addAdminEmail = async () => {
-      const trimmed = newAdminEmail.trim().toLowerCase();
-      if (!trimmed || !validators.email(trimmed)) { showError('Enter a valid email.'); return; }
-      if (localAdminEmails.includes(trimmed)) { showError('Already an admin.'); return; }
-      const session = supabase.getSession();
-      try {
-        const res = await fetch(`${SUPABASE_URL}/rest/v1/admins`, {
-          method: 'POST',
-          headers: { 'apikey': SUPABASE_ANON_KEY, 'Authorization': `Bearer ${session.access_token}`, 'Content-Type': 'application/json', 'Prefer': 'return=representation' },
-          body: JSON.stringify({ email: trimmed })
-        });
-        if (!res.ok) { const e = await res.json().catch(() => ({})); showError(e.message || 'Failed to add admin.'); return; }
-        const updated = [...localAdminEmails, trimmed];
-        setLocalAdminEmails(updated);
-        setAdminEmails(updated);
-        localStorage.setItem('adminEmails', JSON.stringify(updated));
-        setNewAdminEmail('');
-        showSuccess(`${trimmed} added as admin.`);
-      } catch (e) { showError('Failed to add admin.'); }
-    };
-
-    const removeAdminEmail = async (email) => {
-      const session = supabase.getSession();
-      if (session && session.user.email.toLowerCase() === email.toLowerCase()) { showError("You can't remove yourself."); return; }
-      try {
-        await fetch(`${SUPABASE_URL}/rest/v1/admins?email=eq.${encodeURIComponent(email)}`, {
-          method: 'DELETE',
-          headers: { 'apikey': SUPABASE_ANON_KEY, 'Authorization': `Bearer ${session.access_token}` }
-        });
-        const updated = localAdminEmails.filter(e => e !== email);
-        setLocalAdminEmails(updated);
-        setAdminEmails(updated);
-        localStorage.setItem('adminEmails', JSON.stringify(updated));
-        showSuccess('Admin removed.');
-      } catch (e) { showError('Failed to remove admin.'); }
-    };
-
-    const formatDate = (ts) => new Date(ts).toLocaleDateString('en-AU', { day: 'numeric', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' });
-
-    const QueueView = ({ msgs, type }) => {
-      const borderMap = { critical: 'border-red-400', high: 'border-orange-400', support: 'border-blue-400' };
-      const labelMap = {
-        critical: 'Auto-hidden — requires review',
-        high: 'Flagged — visible to users, needs review',
-        support: 'Support queue — user may need help'
-      };
-      const bgMap = { critical: 'bg-red-50 text-red-800', high: 'bg-orange-50 text-orange-800', support: 'bg-blue-50 text-blue-800' };
-      return (
-        <div className="space-y-4">
-          <div className={`rounded-lg p-3 text-sm font-medium ${bgMap[type]}`}>
-            {labelMap[type]} · {msgs.length} item{msgs.length !== 1 ? 's' : ''}
-          </div>
-          {msgs.length === 0 && <p className="text-center text-gray-400 py-8">Nothing in this queue.</p>}
-          {msgs.map(msg => (
-            <div key={msg.id} className={`bg-white rounded-xl shadow-md p-5 border-l-4 ${borderMap[type]}`}>
-              <div className="flex items-start justify-between mb-2">
-                <div>
-                  <p className="font-semibold text-gray-800">{msg.username}</p>
-                  <p className="text-xs text-gray-400">{formatDate(msg.created_at)} · #{msg.room}</p>
-                </div>
-                {msg.moderation_score && (
-                  <span className="text-xs bg-gray-100 text-gray-600 px-2 py-1 rounded-full">{msg.moderation_score}% confidence</span>
-                )}
-              </div>
-              <p className="text-gray-700 bg-gray-50 rounded-lg p-3 mb-2 text-sm">{msg.message}</p>
-              {msg.moderation_reason && <p className="text-xs text-gray-500 mb-1"><strong>Reason:</strong> {msg.moderation_reason}</p>}
-              {msg.moderation_matched && <p className="text-xs text-gray-500 mb-3"><strong>Matched:</strong> "{msg.moderation_matched}"</p>}
-              <div className="flex gap-2">
-                <button onClick={() => approveMessage(msg)} className={`flex-1 ${type === 'support' ? 'bg-blue-500 hover:bg-blue-600' : 'bg-green-500 hover:bg-green-600'} text-white rounded-lg py-2 font-semibold text-sm`}>
-                  {type === 'support' ? 'Mark Reviewed' : 'Restore'}
-                </button>
-                <button onClick={() => deleteMessage(msg)} className="flex-1 bg-red-500 hover:bg-red-600 text-white rounded-lg py-2 font-semibold text-sm">Delete</button>
-              </div>
-            </div>
-          ))}
-        </div>
-      );
-    };
-
-    return (
-      <div className="flex flex-col min-h-screen bg-gray-50 pb-20">
-        <div className="bg-gray-900 text-white p-6">
-          <button onClick={() => setActiveTool(null)} className="flex items-center mb-4 hover:opacity-80">
-            <ArrowLeft className="w-5 h-5 mr-2" /><span>Back</span>
-          </button>
-          <h1 className="text-2xl font-bold">Admin Panel</h1>
-          <p className="text-sm opacity-70">Beat the Bet — moderation & management</p>
-        </div>
-
-        <div className="bg-white border-b border-gray-200 px-4 py-3">
-          <div className="flex gap-2 overflow-x-auto">
-            {[
-              { id: 'critical', label: `Critical (${criticalQueue.length})`, color: 'bg-red-600' },
-              { id: 'high', label: `High (${highQueue.length})`, color: 'bg-orange-500' },
-              { id: 'support', label: `Support (${supportQueue.length})`, color: 'bg-blue-500' },
-              { id: 'users', label: `Users (${userStats?.total ?? '—'})`, color: null },
-              { id: 'admins', label: 'Admins', color: null },
-            ].map(tab => (
-              <button key={tab.id} onClick={() => setActiveAdminTab(tab.id)}
-                className={`px-3 py-2 rounded-lg font-semibold text-xs whitespace-nowrap transition-colors ${activeAdminTab === tab.id ? (tab.color || 'bg-gray-900') + ' text-white' : 'bg-gray-100 text-gray-700 hover:bg-gray-200'}`}>
-                {tab.label}
-              </button>
-            ))}
-            <button onClick={loadData} disabled={loading} className="ml-auto px-3 py-2 rounded-lg text-xs bg-blue-100 text-blue-700 font-semibold disabled:opacity-50">
-              {loading ? '...' : 'Refresh'}
-            </button>
-          </div>
-        </div>
-
-        <div className="flex-1 p-6 overflow-y-auto">
-          <div className="max-w-2xl mx-auto">
-            {loading && !loaded && (
-              <div className="text-center py-12">
-                <div className="w-8 h-8 border-4 border-gray-200 border-t-gray-800 rounded-full animate-spin mx-auto mb-3"></div>
-                <p className="text-gray-500">Loading...</p>
-              </div>
-            )}
-            {loadError && (
-              <div className="bg-red-50 border-l-4 border-red-500 rounded-lg p-4 mb-4">
-                <p className="font-semibold text-red-800 mb-1">Error loading data</p>
-                <p className="text-sm text-red-700">{loadError}</p>
-                <button onClick={loadData} className="mt-2 bg-red-500 text-white px-4 py-2 rounded-lg text-sm font-semibold">Retry</button>
-              </div>
-            )}
-
-            {activeAdminTab === 'critical' && <QueueView msgs={criticalQueue} type="critical" />}
-            {activeAdminTab === 'high' && <QueueView msgs={highQueue} type="high" />}
-            {activeAdminTab === 'support' && <QueueView msgs={supportQueue} type="support" />}
-
-            {activeAdminTab === 'users' && (
-              <div className="space-y-3">
-                {userStats ? (
-                  <>
-                    <div className="grid grid-cols-2 gap-4 mb-4">
-                      <div className="bg-white rounded-xl shadow-md p-5 text-center">
-                        <p className="text-3xl font-bold text-gray-800">{userStats.total}</p>
-                        <p className="text-sm text-gray-500">Total users</p>
-                      </div>
-                      <div className="bg-white rounded-xl shadow-md p-5 text-center">
-                        <p className="text-3xl font-bold text-blue-600">
-                          {userStats.users.filter(u => (new Date() - new Date(u.created_at)) < 7*24*60*60*1000).length}
-                        </p>
-                        <p className="text-sm text-gray-500">New this week</p>
-                      </div>
-                    </div>
-                    <h3 className="font-bold text-gray-800">All users</h3>
-                    {userStats.users.map(user => (
-                      <div key={user.id} className="bg-white rounded-xl shadow-sm p-4 flex items-center justify-between">
-                        <div>
-                          <p className="font-semibold text-gray-800">{user.username || 'No username'}</p>
-                          <p className="text-xs text-gray-400">{formatDate(user.created_at)}</p>
-                        </div>
-                        <div className="text-right">
-                          <p className="text-sm font-semibold text-purple-600">Lvl {user.level}</p>
-                          <p className="text-xs text-gray-400">{user.points} pts</p>
-                        </div>
-                      </div>
-                    ))}
-                  </>
-                ) : (
-                  <p className="text-center text-gray-400 py-8">Loading users...</p>
-                )}
-              </div>
-            )}
-
-            {activeAdminTab === 'admins' && (
-              <div className="space-y-4">
-                <div className="bg-white rounded-xl shadow-md p-5">
-                  <h3 className="font-bold text-gray-800 mb-4">Admin Accounts</h3>
-                  <div className="space-y-2 mb-4">
-                    {localAdminEmails.map(email => (
-                      <div key={email} className="flex items-center justify-between p-3 bg-gray-50 rounded-lg">
-                        <span className="text-sm font-medium text-gray-800">{email}</span>
-                        <button onClick={() => removeAdminEmail(email)} className="text-red-400 hover:text-red-600 text-sm font-semibold">Remove</button>
-                      </div>
-                    ))}
-                  </div>
-                  <div className="border-t border-gray-200 pt-4">
-                    <p className="text-sm font-semibold text-gray-700 mb-2">Add admin email</p>
-                    <div className="flex gap-2">
-                      <input type="email" value={newAdminEmail} onChange={(e) => setNewAdminEmail(e.target.value)}
-                        onKeyPress={(e) => e.key === 'Enter' && addAdminEmail()}
-                        placeholder="email@example.com"
-                        className="flex-1 p-2.5 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-gray-800" />
-                      <button onClick={addAdminEmail} className="bg-gray-900 hover:bg-gray-700 text-white px-4 rounded-lg font-semibold text-sm">Add</button>
-                    </div>
-                  </div>
-                </div>
-                <div className="bg-yellow-50 border-l-4 border-yellow-500 rounded-lg p-4">
-                  <p className="text-sm text-gray-700 mb-1">Add an email to grant admin access. The user must have signed up first.</p>
-                  <p className="text-xs text-gray-500">After adding, run in Supabase SQL Editor:</p>
-                  <code className="block text-xs bg-white rounded p-2 mt-1 text-gray-700 select-all">
-                    {"update public.admins a set user_id = u.id from auth.users u where lower(u.email) = lower(a.email);"}
-                  </code>
-                </div>
-              </div>
-            )}
-          </div>
-        </div>
-      </div>
-    );
-  });
-
-
-  // ============================================================
-  // Privacy Policy Page
-  // ============================================================
-  const PrivacyPolicyPage = () => (
-    <div className="flex flex-col min-h-screen bg-gray-50 pb-20">
-      <div className="bg-gray-900 text-white p-6">
-        <button onClick={() => setActiveTool(null)} className="flex items-center mb-4 hover:opacity-80">
-          <ArrowLeft className="w-5 h-5 mr-2" /><span>Back</span>
-        </button>
-        <h1 className="text-2xl font-bold">Privacy Policy</h1>
-        <p className="text-sm opacity-70">Version 1.0 · Last updated 1 June 2026</p>
-      </div>
-      <div className="flex-1 p-6 overflow-y-auto">
-        <div className="max-w-2xl mx-auto space-y-6 text-gray-700 text-sm leading-relaxed">
-
-          {[
-            { title: "1. About Beat the Bet", content: `Beat the Bet is an Australian-based gambling addiction recovery and support platform. Beat the Bet is operated by an Australian sole trader. All enquiries may be directed to beatthebetadmin@gmail.com. Further business details are available upon reasonable request.` },
-            { title: "2. Important Disclaimer", content: `Beat the Bet is a peer-support and recovery platform — not a medical, counselling, crisis, financial, or legal service. The Services are not a substitute for professional help. The platform may surface crisis resources where distress is detected; this does not constitute clinical assessment or intervention. If you are in crisis, contact emergency services immediately.` },
-            { title: "3. Information We Collect", content: `We collect: account information (email, username, password); recovery content (journal entries, timer data, milestones, chat messages, photos); usage information (feature use, activity logs, login history); device and technical information (IP address, device type, browser); and user-generated community content. You are responsible for what you share publicly.` },
-            { title: "4. Why We Collect Information", content: `We collect information to: provide and improve the Services; personalise your recovery experience; maintain community safety through moderation; detect fraud and unauthorised access; comply with legal obligations; and collect anonymised analytics (app opens, panic button activations) for platform improvement. We do not sell this data or share it for advertising.` },
-            { title: "5. Community Chat Moderation", content: `Community messages may be automatically screened using keyword detection systems and reviewed by human moderators. Messages violating Community Guidelines may be removed. Chat messages are automatically deleted after 30 days as a data minimisation measure (subject to safety, legal, or dispute resolution requirements). Moderation is conducted to protect users and maintain platform safety.` },
-            { title: "6. Data Storage & Security", content: `Your data is stored via Supabase (authentication, database, storage) on Amazon Web Services infrastructure in Sydney, Australia (ap-southeast-2). We use encryption in transit, secure authentication, access controls, and monitoring. No method of storage is completely secure and we cannot guarantee absolute security.` },
-            { title: "7. Third-Party Services", content: `We use: Supabase (auth, database, storage); Amazon Web Services (infrastructure through Supabase); Last.fm API (music recommendations — artist names only, no personal data); Vercel (hosting and deployment).` },
-            { title: "8. Cookies & Local Storage", content: `We do not use advertising cookies. We use localStorage for session persistence, user preferences, and platform functionality. Disabling local storage may affect app functionality.` },
-            { title: "9. Push Notifications", content: `We may provide optional push notifications for recovery reminders, payday alerts, milestone celebrations, and progress updates. You can enable or disable notifications through your device settings. Notification content is not shared with third parties.` },
-            { title: "10. Data Retention", content: `User data is retained while your account is active. When deleted, personal information is removed within a reasonable period unless retention is required by law, safety obligations, or dispute resolution. Community chat messages are deleted after 30 days automatically.` },
-            { title: "11. Your Privacy Rights", content: `Australian users have rights under the Privacy Act 1988 (Cth) including access, correction, and deletion rights. You can delete your account directly in the app. If unsatisfied with our response to a privacy complaint, you may contact the OAIC at www.oaic.gov.au. GDPR rights apply where applicable.` },
-            { title: "12. Children's Privacy", content: `Beat the Bet is for users aged 18 and over. We do not knowingly collect information from anyone under 18. If we become aware of such collection, we will delete the information and terminate the account.` },
-            { title: "13. Contact Us", content: `For privacy questions, requests, or complaints: beatthebetadmin@gmail.com. For privacy-related requests, please include information to verify your identity. Further business details are available upon reasonable request.` },
-            { title: "14. Consent & Lawful Processing", content: `By using the Services you consent to collection and use of your information as described here. Some processing is on the basis of legitimate interest (security, moderation, fraud prevention). You may object to legitimate-interest processing by contacting beatthebetadmin@gmail.com.` },
-          ].map((section, i) => (
-            <div key={i} className="bg-white rounded-xl shadow-sm p-5">
-              <h2 className="font-bold text-gray-900 mb-3">{section.title}</h2>
-              <p className="text-gray-600 leading-relaxed">{section.content}</p>
-            </div>
-          ))}
-
-          <p className="text-center text-xs text-gray-400 py-4">© 2026 Beat the Bet. All rights reserved.</p>
-        </div>
-      </div>
-    </div>
-  );
-
-  // ============================================================
-  // Terms of Service Page
-  // ============================================================
-  const TermsOfServicePage = () => (
-    <div className="flex flex-col min-h-screen bg-gray-50 pb-20">
-      <div className="bg-gray-900 text-white p-6">
-        <button onClick={() => setActiveTool(null)} className="flex items-center mb-4 hover:opacity-80">
-          <ArrowLeft className="w-5 h-5 mr-2" /><span>Back</span>
-        </button>
-        <h1 className="text-2xl font-bold">Terms of Service</h1>
-        <p className="text-sm opacity-70">Version 1.0 · Effective 1 June 2026</p>
-      </div>
-      <div className="flex-1 p-6 overflow-y-auto">
-        <div className="max-w-2xl mx-auto space-y-6 text-gray-700 text-sm leading-relaxed">
-
-          {[
-            { title: "1. Acceptance of These Terms", content: `By creating an account or using Beat the Bet (available at btb1.vercel.app), you agree to these Terms of Service. If you do not agree, do not use the Services. By using the Services, you also acknowledge the Beat the Bet Privacy Policy.` },
-            { title: "2. About the Service", content: `Beat the Bet is an Australian peer-support and recovery platform provided free of charge. It is not a medical, healthcare, counselling, psychiatric, or crisis service. Nothing in the app constitutes professional advice. Seek qualified help where appropriate. Beat the Bet is not monitored as an emergency service — if you are in crisis, contact emergency services immediately.` },
-            { title: "3. Eligibility", content: `You must be at least 18 years old to use the Services. By registering, you confirm you are 18 or over. Each person may hold only one account. You must not use the Services to harm, exploit, or manipulate other users.` },
-            { title: "4. User Accounts", content: `You are responsible for keeping your account credentials confidential and for all activity under your account. Notify us immediately of unauthorised access. Provide accurate information. Usernames must not be offensive, impersonate others, or mislead users about your identity.` },
-            { title: "5. Community Standards", content: `You may discuss recovery experiences, urges, coping strategies, progress, and encouragement. You must not post gambling promotions, betting tips, scams, personal contact details, harassment, abuse, or content that undermines others' recovery. No links or images in community chat (photo uploads are available in Why I'm Quitting). No direct messaging between users.` },
-            { title: "6. Content & Moderation", content: `All community content is subject to moderation using automated detection and human review. Flagged content may be hidden, removed, or escalated. Beat the Bet has sole discretion over moderation decisions and is not obligated to explain them. Chat messages are automatically deleted after 30 days.` },
-            { title: "7. Prohibited Conduct", content: `You must not: promote gambling; solicit money or loans; engage in scams or fraud; harass or exploit users; impersonate others; attempt to bypass moderation; share external contact details; interfere with the platform (including scraping or unauthorised access); or engage in predatory behaviour toward vulnerable users.` },
-            { title: "8. Intellectual Property", content: `All rights in the Services (software, branding, design, content) belong to Beat the Bet or its licensors. You retain ownership of content you submit, but grant Beat the Bet a non-exclusive worldwide licence to store, display, process, and moderate it for the purpose of operating the Services.` },
-            { title: "9. Privacy", content: `Your use is governed by the Beat the Bet Privacy Policy. By using the Services, you consent to data handling as described in the Privacy Policy. Contact beatthebetadmin@gmail.com for privacy enquiries.` },
-            { title: "10. Third-Party Services", content: `The app uses Supabase, Vercel, Last.fm, and Amazon Web Services (AWS). Beat the Bet is not responsible for third-party service outages, failures, or security incidents beyond its reasonable control.` },
-            { title: "11. Disclaimers", content: `The Services are provided "as is" and "as available". Beat the Bet makes no guarantees about accuracy, availability, or recovery outcomes. Community content is user-generated and not endorsed by Beat the Bet. Nothing in the Services constitutes medical, legal, or financial advice.` },
-            { title: "12. Limitation of Liability", content: `To the maximum extent permitted by Australian law, Beat the Bet is not liable for indirect, consequential, or incidental loss, loss of data, financial loss, or emotional distress arising from use of the Services. Nothing excludes rights that cannot lawfully be excluded under Australian consumer law.` },
-            { title: "13. Account Suspension & Termination", content: `Beat the Bet may suspend or terminate accounts that violate these Terms. We reserve the right to archive inactive accounts with reasonable notice. You may delete your account at any time through the in-app account deletion feature. Termination may result in loss of access to account data and features.` },
-            { title: "14. Changes to These Terms", content: `We may update these Terms. Where material changes are made, we will notify users through the app or other appropriate means. Continued use after an update constitutes acceptance. If you disagree with revised Terms, stop using the Services.` },
-            { title: "15. Governing Law", content: `These Terms are governed by the laws of New South Wales, Australia. You submit to the non-exclusive jurisdiction of the courts of New South Wales.` },
-            { title: "16. Contact", content: `Beat the Bet is operated by an Australian sole trader. For enquiries, support, or legal notices: beatthebetadmin@gmail.com. Further business details are available upon reasonable request.` },
-          ].map((section, i) => (
-            <div key={i} className="bg-white rounded-xl shadow-sm p-5">
-              <h2 className="font-bold text-gray-900 mb-3">{section.title}</h2>
-              <p className="text-gray-600 leading-relaxed">{section.content}</p>
-            </div>
-          ))}
-
-          <p className="text-center text-xs text-gray-400 py-4">© 2026 Beat the Bet. All rights reserved.</p>
-        </div>
-      </div>
-    </div>
-  );
 
   // Show auth screens if not authenticated
   if (!isAuthenticated) {
