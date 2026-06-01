@@ -772,8 +772,14 @@ export default function BeatTheBet() {
         setDailyGamblingSpend(parseFloat(p.daily_gambling_spend));
         localStorage.setItem('dailyGamblingSpend', p.daily_gambling_spend.toString());
       }
-      if (p.points) setPoints(p.points);
-      if (p.level) setLevel(p.level);
+      if (p.points) {
+        setPoints(p.points);
+        localStorage.setItem('userPoints', p.points.toString());
+      }
+      if (p.level) {
+        setLevel(p.level);
+        localStorage.setItem('userLevel', p.level.toString());
+      }
     }
 
     setCurrentUser(user);
@@ -1294,8 +1300,13 @@ export default function BeatTheBet() {
 
   // Daily check-in on app open
   useEffect(() => {
-    checkDailyCheckIn();
-  }, []);
+    // Small delay to allow settings restore from Supabase to complete first
+    // This prevents double-awarding daily check-in points on new devices
+    const timer = setTimeout(() => {
+      if (isAuthenticated) checkDailyCheckIn();
+    }, 2000);
+    return () => clearTimeout(timer);
+  }, [isAuthenticated]);
 
   const handleReset = () => {
     const newDate = new Date();
@@ -4830,7 +4841,7 @@ export default function BeatTheBet() {
 
         {/* Room Selector */}
         <div className="bg-white border-b border-gray-200 px-4 py-3">
-          <div className="flex gap-2 overflow-x-auto pb-1">
+          <div className="flex gap-2 overflow-x-auto pb-1" key={selectedInterests.join(',')}>
             {rooms.map(room => (
               <button
                 key={room.id}
@@ -5534,7 +5545,17 @@ export default function BeatTheBet() {
                 </p>
               </div>
               <button
-                onClick={() => { const today = new Date().toISOString().split('T')[0]; setTempStartDate(today); setStartDate(new Date(today)); localStorage.setItem('startDate', new Date(today).toISOString()); syncProfileToSupabase({ start_date: new Date(today).toISOString() }).catch(() => {}); setOnboardingStep(2); }}
+                onClick={() => {
+                const today = new Date().toISOString().split('T')[0];
+                setTempStartDate(today);
+                const d = new Date(today);
+                setStartDate(d);
+                setProfileLoaded(true);
+                localStorage.setItem('startDate', d.toISOString());
+                syncProfileToSupabase({ start_date: d.toISOString() }).catch(() => {});
+                showSuccess('Your recovery timer has started from today.');
+                setOnboardingStep(2);
+              }}
                 className="w-full bg-blue-500 hover:bg-blue-600 text-white rounded-xl py-4 font-bold text-lg transition-colors"
               >
                 Let's Do This
@@ -7907,18 +7928,22 @@ Keep going! Every day counts. 💪
                   <span className="font-semibold text-gray-900">Web (Mobile coming soon)</span>
                 </div>
                 <div className="border-t border-gray-100 pt-3 mt-1 space-y-2">
-                  <button
-                    onClick={() => { setActiveTab('resources'); setActiveTool('privacy'); }}
-                    className="w-full text-left text-blue-600 hover:text-blue-800 font-medium"
+                  <a
+                    href="/privacy"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="block w-full text-left text-blue-600 hover:text-blue-800 font-medium py-1"
                   >
                     Privacy Policy →
-                  </button>
-                  <button
-                    onClick={() => { setActiveTab('resources'); setActiveTool('terms'); }}
-                    className="w-full text-left text-blue-600 hover:text-blue-800 font-medium"
+                  </a>
+                  <a
+                    href="/terms"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="block w-full text-left text-blue-600 hover:text-blue-800 font-medium py-1"
                   >
                     Terms of Service →
-                  </button>
+                  </a>
                 </div>
               </div>
             </div>
