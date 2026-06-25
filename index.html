@@ -62,7 +62,7 @@
     fetch('/beat-the-bet.jsx')
       .then(r => r.text())
       .then(code => {
-        // Remove "export default" so Babel standalone can handle it
+// Remove "export default" so Babel standalone can handle it
         let cleaned = code;
         // Strip any export statement robustly, regardless of exact format
         cleaned = cleaned.replace(/export\s+default\s+function\s+/g, 'function ');
