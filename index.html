@@ -68,6 +68,11 @@
         cleaned = cleaned.replace(/export\s+default\s+function\s+/g, 'function ');
         cleaned = cleaned.replace(/export\s+default\s+/g, '');
         cleaned = cleaned.replace(/^export\s+/gm, '');
+        // React/ReactDOM/lucide are loaded as globals via CDN <script> tags, so
+        // beat-the-bet.jsx never needs import statements. Strip any that appear
+        // (e.g. `import X from 'y'` or `import 'y'`) so a stray import doesn't
+        // crash eval() with "Cannot use import statement outside a module".
+        cleaned = cleaned.replace(/^\s*import\s+.*$/gm, '');
 
         const lucideReplacement = `
 // Safe Lucide icon components using inline SVG paths
