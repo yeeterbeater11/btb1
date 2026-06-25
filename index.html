@@ -63,7 +63,11 @@
       .then(r => r.text())
       .then(code => {
         // Remove "export default" so Babel standalone can handle it
-        const cleaned = code.replace(/export\s+default\s+function\s+/, 'function ');
+        let cleaned = code;
+        // Strip any export statement robustly, regardless of exact format
+        cleaned = cleaned.replace(/export\s+default\s+function\s+/g, 'function ');
+        cleaned = cleaned.replace(/export\s+default\s+/g, '');
+        cleaned = cleaned.replace(/^export\s+/gm, '');
 
         const lucideReplacement = `
 // Safe Lucide icon components using inline SVG paths
@@ -170,6 +174,11 @@ const rootEl = document.getElementById('root');
 const root = ReactDOM.createRoot(rootEl);
 root.render(React.createElement(BeatTheBet));
 `;
+
+        // Safety check: warn in console if export/import statements remain
+        if (/^\s*export\s/m.test(cleaned) || /^\s*import\s/m.test(cleaned)) {
+          console.warn('Warning: cleaned JSX still contains export/import statements. Check beat-the-bet.jsx for unusual formatting near the top-level export.');
+        }
 
         const transformed = Babel.transform(withMount, { presets: ['react'] }).code;
 
