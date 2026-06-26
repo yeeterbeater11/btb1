@@ -712,6 +712,28 @@ const TermsOfServicePage = () => (
 );
 
 export default function BeatTheBet() {
+  // ============================================================
+  // All localStorage keys that hold per-account data. Used on
+  // signup, login, and logout to make sure one account's data
+  // never bleeds into another account on the same device.
+  // ============================================================
+  const USER_SCOPED_STORAGE_KEYS = [
+    'startDate','gambleFreeStartDate','userPoints','userLevel',
+    'earnedBadges','journalEntries','activityLog','whyImQuitting',
+    'savingsMilestones','paydaySettings','selectedInterests',
+    'seedArtists','artistFeedback','favoriteArtists','savedForLater',
+    'dailyGamblingSpend','lastCheckIn','journalMode','chatUsername',
+    'hasCompletedOnboarding','username','userAgeRange','userCity',
+    'myBudgetData','adminEmails','reportedMessageIds',
+    'appOpenTimestamps','panicButtonTimestamps','toolUsage',
+    'streakData','favoritePrompts','dailyStepGoal',
+    'journalCalendarMonth','currentUser','isAuthenticated','sb_session'
+  ];
+
+  const clearUserScopedStorage = () => {
+    USER_SCOPED_STORAGE_KEYS.forEach(k => localStorage.removeItem(k));
+  };
+
   // Admin access
   const [isAdminUser, setIsAdminUser] = React.useState(false);
   const [adminCheckDone, setAdminCheckDone] = React.useState(false);
@@ -1151,18 +1173,36 @@ export default function BeatTheBet() {
     if (!password) throw new Error('Please enter your password');
 
     const { data, error } = await supabase.auth.signInWithPassword({ email, password });
-    if (error) throw new Error(error.message || error.error_description || 'Login failed');
+    if (error) {
+      const rawMessage = error.message || error.error_description || error.msg || '';
+      if (/email.*not.*confirm|confirm.*email/i.test(rawMessage)) {
+        throw new Error('Login failed: please verify your email before logging in.');
+      }
+      throw new Error(rawMessage || 'Login failed');
+    }
+
+    const loggedInUser = data && data.user ? data.user : data;
+    if (!loggedInUser || !loggedInUser.id) {
+      throw new Error('Login failed: please try again.');
+    }
+
+    // Clear any leftover data from a previous account on this device before
+    // restoring this account's data, in case logout was skipped (e.g. the
+    // browser was closed without logging out first).
+    const preservedSession = localStorage.getItem('sb_session');
+    clearUserScopedStorage();
+    if (preservedSession) localStorage.setItem('sb_session', preservedSession);
 
     const user = {
-      id: data.user.id,
-      email: data.user.email,
+      id: loggedInUser.id,
+      email: loggedInUser.email,
       username: '',
-      createdAt: data.user.created_at,
+      createdAt: loggedInUser.created_at,
       profileComplete: false
     };
 
     // Load profile from database
-    const { data: profile } = await supabase.from('profiles').select('*').eq('id', data.user.id);
+    const { data: profile } = await supabase.from('profiles').select('*').eq('id', loggedInUser.id);
     if (profile && profile.length > 0) {
       const p = profile[0];
       const resolvedUsername = p.username || '';
@@ -1204,7 +1244,7 @@ export default function BeatTheBet() {
     localStorage.setItem('currentUser', JSON.stringify(user));
 
     // Restore all user data from Supabase in background
-    const uid = data.user.id;
+    const uid = loggedInUser.id;
     const token = data.access_token;
     const headers = { 'apikey': SUPABASE_ANON_KEY, 'Authorization': `Bearer ${token}` };
 
@@ -1288,11 +1328,11 @@ export default function BeatTheBet() {
           }
         }).catch(() => {}),
 
-      // Liabilities (savings milestones)
+      // My Budget data (income, expenses, accounts, allocations)
       fetch(`${SUPABASE_URL}/rest/v1/liabilities?user_id=eq.${uid}&limit=1`, { headers })
         .then(r => r.json()).then(rows => {
-          if (Array.isArray(rows) && rows.length > 0 && Array.isArray(rows[0].items) && rows[0].items.length > 0) {
-            localStorage.setItem('savingsMilestones', JSON.stringify(rows[0].items));
+          if (Array.isArray(rows) && rows.length > 0 && rows[0].items) {
+            localStorage.setItem('myBudgetData', JSON.stringify(rows[0].items));
           }
         }).catch(() => {}),
 
@@ -1353,16 +1393,11 @@ export default function BeatTheBet() {
       profileComplete: false
     };
 
-    // Clear any stale data from previous sessions/accounts
-    const keysToReset = [
-      'startDate','gambleFreeStartDate','userPoints','userLevel',
-      'earnedBadges','journalEntries','activityLog','whyImQuitting',
-      'savingsMilestones','paydaySettings','selectedInterests',
-      'seedArtists','artistFeedback','favoriteArtists','savedForLater',
-      'dailyGamblingSpend','lastCheckIn','journalMode','chatUsername',
-      'hasCompletedOnboarding','username','userAgeRange','userCity'
-    ];
-    keysToReset.forEach(k => localStorage.removeItem(k));
+    // Clear any stale data from previous sessions/accounts (but keep the
+    // session we just created a moment ago via supabase.auth.signUp)
+    const preservedSession = localStorage.getItem('sb_session');
+    clearUserScopedStorage();
+    if (preservedSession) localStorage.setItem('sb_session', preservedSession);
     const now = new Date();
     setStartDate(now);
     setProfileLoaded(true);
@@ -1432,9 +1467,7 @@ export default function BeatTheBet() {
     await supabase.auth.signOut();
     setCurrentUser(null);
     setIsAuthenticated(false);
-    localStorage.removeItem('isAuthenticated');
-    localStorage.removeItem('currentUser');
-    localStorage.removeItem('sb_session');
+    clearUserScopedStorage();
     setAuthScreen('welcome');
   };
 
