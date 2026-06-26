@@ -1847,7 +1847,7 @@ export default function BeatTheBet() {
     const getMostUsedTools = () => {
       const tools = [
         { id: 'mindfulness', name: 'Journal', icon: '📝', color: 'blue' },
-        { id: 'savings', name: 'Savings Goal', icon: '💰', color: 'green' },
+        { id: 'my-budget', name: 'My Budget', icon: '💰', color: 'green' },
         { id: 'analytics', name: 'My Progress', icon: '📊', color: 'indigo' },
         { id: 'music-discovery', name: 'Music Discovery', icon: '🎵', color: 'purple' },
         { id: 'activities', name: 'Challenges', icon: '🎯', color: 'orange' },
@@ -1866,7 +1866,7 @@ export default function BeatTheBet() {
       if (sorted.every(t => t.uses === 0)) {
         return [
           tools.find(t => t.id === 'mindfulness'),
-          tools.find(t => t.id === 'savings'),
+          tools.find(t => t.id === 'my-budget'),
           tools.find(t => t.id === 'analytics')
         ];
       }
@@ -2407,7 +2407,7 @@ export default function BeatTheBet() {
     if (activeTool === 'helpline') return <HelplinePage />;
     if (activeTool === 'betstop') return <BetStopPage />;
     if (activeTool === 'meetings') return <MeetingsPage />;
-    if (activeTool === 'savings') return <SavingsCalculatorPage />;
+    if (activeTool === 'my-budget') return <MyBudgetPage />;
     if (activeTool === 'mindfulness') return showJournalCalendar ? <JournalCalendarView /> : <MindfulnessPage />;
     if (activeTool === 'shop') return <ShopPage />;
     if (activeTool === 'activities') return <ActivityChallengesPage />;
@@ -2499,9 +2499,9 @@ export default function BeatTheBet() {
                 </div>
               </button>
 
-              {/* Savings Calculator */}
+              {/* My Budget */}
               <button
-                onClick={() => setActiveTool('savings')}
+                onClick={() => setActiveTool('my-budget')}
                 className="w-full bg-white rounded-xl shadow-md p-6 hover:shadow-lg transition-all text-left"
               >
                 <div className="flex items-start">
@@ -2510,11 +2510,11 @@ export default function BeatTheBet() {
                   </div>
                   <div className="flex-1">
                     <div className="flex items-center justify-between">
-                      <h3 className="font-bold text-lg text-gray-800 mb-1">What You're Protecting</h3>
+                      <h3 className="font-bold text-lg text-gray-800 mb-1">My Budget</h3>
                       <ChevronRight className="w-5 h-5 text-gray-400" />
                     </div>
                     <p className="text-gray-600 text-sm">
-                      Your bills, debts, and savings goals
+                      Know exactly where your money goes
                     </p>
                   </div>
                 </div>
@@ -3716,44 +3716,27 @@ export default function BeatTheBet() {
     );
   };
 
-  const SavingsCalculatorPage = React.memo(() => {
-    // Use ref for input value to persist across re-renders
-    const dailySpendInputRef = React.useRef(null);
-
-    const handleSaveDailySpend = () => {
-      if (dailySpendInputRef.current) {
-        const amount = parseFloat(dailySpendInputRef.current.value) || 0;
-        setDailyGamblingSpend(amount);
-        localStorage.setItem('dailyGamblingSpend', amount.toString());
-        syncSettingsToSupabase({ daily_gambling_spend: amount }).catch(() => {});
-      }
-    };
-
-    const calculateSavings = (days) => {
-      return (dailyGamblingSpend * days).toFixed(0);
-    };
-
-    // Memoize savings examples to prevent recalculation on every render
-    // Default milestones — user can edit, delete, and add their own
-    const defaultMilestones = [
-      { id: 1, label: 'Phone bill', amount: 60, category: 'bills', description: "Monthly phone bill." },
-      { id: 2, label: 'Electricity bill', amount: 300, category: 'bills', description: "Quarterly electricity bill." },
-      { id: 3, label: 'Internet bill', amount: 80, category: 'bills', description: "Monthly internet bill." },
-      { id: 4, label: 'Car registration', amount: 900, category: 'bills', description: "Annual rego." },
-      { id: 5, label: 'Credit card debt', amount: 2000, category: 'debt', description: "Credit card balance." },
-      { id: 6, label: 'Personal loan', amount: 5000, category: 'debt', description: "Personal loan balance." },
-      { id: 7, label: 'Emergency fund', amount: 1000, category: 'savings', description: "Emergency savings buffer." },
-    ];
-
-    const [milestones, setMilestones] = React.useState(() => {
-      const saved = localStorage.getItem('savingsMilestones');
-      return saved ? JSON.parse(saved) : defaultMilestones;
+  const MyBudgetPage = React.memo(() => {
+    // ============================================================
+    // State: Bank Accounts, Income, Expenses, Allocations
+    // ============================================================
+    const [budgetData, setBudgetData] = React.useState(() => {
+      const saved = localStorage.getItem('myBudgetData');
+      return saved ? JSON.parse(saved) : {
+        accounts: [],
+        primaryIncome: { amount: '', frequency: 'fortnightly' },
+        additionalIncome: [],
+        expenses: [],
+        allocations: [],
+        tags: ['Subscriptions', 'Loan Repayments', 'Bills', 'Insurance']
+      };
     });
 
-    const saveMilestones = (updated) => {
-      setMilestones(updated);
-      localStorage.setItem('savingsMilestones', JSON.stringify(updated));
-      // Sync to Supabase
+    const { accounts, primaryIncome, additionalIncome, expenses, allocations, tags } = budgetData;
+
+    const saveBudgetData = (updated) => {
+      setBudgetData(updated);
+      localStorage.setItem('myBudgetData', JSON.stringify(updated));
       const session = supabase.getSession();
       if (session) {
         supabase.from('liabilities').upsert({
@@ -3764,61 +3747,261 @@ export default function BeatTheBet() {
       }
     };
 
-    const [editingMilestone, setEditingMilestone] = React.useState(null); // id of milestone being edited
-    const [editLabel, setEditLabel] = React.useState('');
-    const [editAmount, setEditAmount] = React.useState('');
-    const [editCategory, setEditCategory] = React.useState('bills');
-    const [showAddMilestone, setShowAddMilestone] = React.useState(false);
-    const [newLabel, setNewLabel] = React.useState('');
-    const [newAmount, setNewAmount] = React.useState('');
-    const [newCategory, setNewCategory] = React.useState('bills');
-
-    const startEdit = (m) => {
-      setEditingMilestone(m.id);
-      setEditLabel(m.label);
-      setEditAmount(String(m.amount));
-      setEditCategory(m.category);
+    // ============================================================
+    // Frequency conversion - normalise everything to the primary pay cycle
+    // ============================================================
+    const FREQUENCY_PER_YEAR = {
+      weekly: 52,
+      fortnightly: 26,
+      monthly: 12,
+      quarterly: 4,
+      yearly: 1
     };
 
-    const saveEdit = () => {
-      if (!editLabel.trim() || !editAmount) return;
-      const updated = milestones.map(m =>
-        m.id === editingMilestone
-          ? { ...m, label: editLabel.trim(), amount: parseFloat(editAmount), category: editCategory }
-          : m
-      ).sort((a, b) => a.amount - b.amount);
-      saveMilestones(updated);
-      setEditingMilestone(null);
+    const toPerCycle = (amount, itemFrequency, targetFrequency) => {
+      const amt = parseFloat(amount) || 0;
+      if (amt === 0) return 0;
+      const itemPerYear = FREQUENCY_PER_YEAR[itemFrequency] || 12;
+      const targetPerYear = FREQUENCY_PER_YEAR[targetFrequency] || 26;
+      // Convert item amount to an annual figure, then divide by target cycles per year
+      const annual = amt * itemPerYear;
+      const perCycle = annual / targetPerYear;
+      // Round up on uneven divisions so the user always sets aside slightly more, never short
+      return Math.ceil(perCycle * 100) / 100;
     };
 
-    const deleteMilestone = (id) => {
-      saveMilestones(milestones.filter(m => m.id !== id));
+    const primaryFrequency = primaryIncome.frequency || 'fortnightly';
+
+    const totalIncomePerCycle = React.useMemo(() => {
+      const primary = parseFloat(primaryIncome.amount) || 0;
+      const additional = additionalIncome.reduce((sum, inc) => {
+        return sum + toPerCycle(inc.amount, inc.frequency, primaryFrequency);
+      }, 0);
+      return primary + additional;
+    }, [primaryIncome, additionalIncome, primaryFrequency]);
+
+    const totalExpensesPerCycle = React.useMemo(() => {
+      return expenses.reduce((sum, exp) => {
+        return sum + toPerCycle(exp.amount, exp.frequency, primaryFrequency);
+      }, 0);
+    }, [expenses, primaryFrequency]);
+
+    const leftover = Math.max(0, totalIncomePerCycle - totalExpensesPerCycle);
+    const isOverBudget = totalExpensesPerCycle > totalIncomePerCycle;
+
+    const totalAllocated = React.useMemo(() => {
+      return allocations.reduce((sum, a) => sum + (parseFloat(a.amount) || 0), 0);
+    }, [allocations]);
+
+    const unallocated = Math.max(0, leftover - totalAllocated);
+    const isOverAllocated = totalAllocated > leftover;
+
+    const frequencyLabels = {
+      weekly: 'Weekly',
+      fortnightly: 'Fortnightly',
+      monthly: 'Monthly',
+      quarterly: 'Quarterly',
+      yearly: 'Yearly'
     };
 
-    const addMilestone = () => {
-      if (!newLabel.trim() || !newAmount) return;
-      const newM = {
-        id: Date.now(),
-        label: newLabel.trim(),
-        amount: parseFloat(newAmount),
-        category: newCategory,
-        description: '',
+    // ============================================================
+    // Bank Accounts
+    // ============================================================
+    const [showAccountForm, setShowAccountForm] = React.useState(false);
+    const [newAccountName, setNewAccountName] = React.useState('');
+
+    const addAccount = () => {
+      if (!newAccountName.trim()) return;
+      const updated = {
+        ...budgetData,
+        accounts: [...accounts, { id: Date.now(), name: newAccountName.trim() }]
       };
-      const updated = [...milestones, newM].sort((a, b) => a.amount - b.amount);
-      saveMilestones(updated);
-      setNewLabel('');
-      setNewAmount('');
-      setNewCategory('bills');
-      setShowAddMilestone(false);
+      saveBudgetData(updated);
+      setNewAccountName('');
+      setShowAccountForm(false);
     };
 
-    const categoryOptions = [
-      { value: 'essentials', label: 'Essentials' },
-      { value: 'bills', label: 'Bills' },
-      { value: 'debt', label: 'Debt' },
-      { value: 'savings', label: 'Savings' },
-      { value: 'future', label: 'Future' },
+    const deleteAccount = (id) => {
+      const updated = {
+        ...budgetData,
+        accounts: accounts.filter(a => a.id !== id),
+        expenses: expenses.map(e => e.accountId === id ? { ...e, accountId: null } : e),
+        allocations: allocations.map(a => a.accountId === id ? { ...a, accountId: null } : a)
+      };
+      saveBudgetData(updated);
+    };
+
+    // ============================================================
+    // Income
+    // ============================================================
+    const [editingIncome, setEditingIncome] = React.useState(false);
+    const [tempIncomeAmount, setTempIncomeAmount] = React.useState(primaryIncome.amount || '');
+    const [tempIncomeFreq, setTempIncomeFreq] = React.useState(primaryIncome.frequency || 'fortnightly');
+
+    const savePrimaryIncome = () => {
+      const updated = {
+        ...budgetData,
+        primaryIncome: { amount: tempIncomeAmount, frequency: tempIncomeFreq }
+      };
+      saveBudgetData(updated);
+      setEditingIncome(false);
+      showSuccess('Income updated!');
+    };
+
+    const [showAdditionalIncomeForm, setShowAdditionalIncomeForm] = React.useState(false);
+    const [newIncomeTitle, setNewIncomeTitle] = React.useState('');
+    const [newIncomeAmount, setNewIncomeAmount] = React.useState('');
+    const [newIncomeFreq, setNewIncomeFreq] = React.useState('monthly');
+
+    const addAdditionalIncome = () => {
+      if (!newIncomeTitle.trim() || !newIncomeAmount) return;
+      const updated = {
+        ...budgetData,
+        additionalIncome: [...additionalIncome, {
+          id: Date.now(),
+          title: newIncomeTitle.trim(),
+          amount: parseFloat(newIncomeAmount),
+          frequency: newIncomeFreq
+        }]
+      };
+      saveBudgetData(updated);
+      setNewIncomeTitle('');
+      setNewIncomeAmount('');
+      setNewIncomeFreq('monthly');
+      setShowAdditionalIncomeForm(false);
+    };
+
+    const deleteAdditionalIncome = (id) => {
+      saveBudgetData({ ...budgetData, additionalIncome: additionalIncome.filter(i => i.id !== id) });
+    };
+
+    // ============================================================
+    // Expenses
+    // ============================================================
+    const [showExpenseForm, setShowExpenseForm] = React.useState(false);
+    const [editingExpenseId, setEditingExpenseId] = React.useState(null);
+    const [expTitle, setExpTitle] = React.useState('');
+    const [expAmount, setExpAmount] = React.useState('');
+    const [expFreq, setExpFreq] = React.useState('monthly');
+    const [expTag, setExpTag] = React.useState(tags[0] || '');
+    const [expAccountId, setExpAccountId] = React.useState(null);
+    const [newTagInput, setNewTagInput] = React.useState('');
+    const [showNewTagInput, setShowNewTagInput] = React.useState(false);
+
+    const resetExpenseForm = () => {
+      setExpTitle('');
+      setExpAmount('');
+      setExpFreq('monthly');
+      setExpTag(tags[0] || '');
+      setExpAccountId(null);
+      setEditingExpenseId(null);
+      setShowExpenseForm(false);
+      setShowNewTagInput(false);
+      setNewTagInput('');
+    };
+
+    const startEditExpense = (exp) => {
+      setEditingExpenseId(exp.id);
+      setExpTitle(exp.title);
+      setExpAmount(String(exp.amount));
+      setExpFreq(exp.frequency);
+      setExpTag(exp.tag || tags[0] || '');
+      setExpAccountId(exp.accountId || null);
+      setShowExpenseForm(true);
+    };
+
+    const addOrUpdateExpense = () => {
+      if (!expTitle.trim() || !expAmount) return;
+      let updatedTags = tags;
+      let finalTag = expTag;
+      if (showNewTagInput && newTagInput.trim()) {
+        finalTag = newTagInput.trim();
+        if (!tags.includes(finalTag)) {
+          updatedTags = [...tags, finalTag];
+        }
+      }
+
+      let updatedExpenses;
+      if (editingExpenseId) {
+        updatedExpenses = expenses.map(e => e.id === editingExpenseId
+          ? { ...e, title: expTitle.trim(), amount: parseFloat(expAmount), frequency: expFreq, tag: finalTag, accountId: expAccountId }
+          : e
+        );
+      } else {
+        updatedExpenses = [...expenses, {
+          id: Date.now(),
+          title: expTitle.trim(),
+          amount: parseFloat(expAmount),
+          frequency: expFreq,
+          tag: finalTag,
+          accountId: expAccountId
+        }];
+      }
+
+      saveBudgetData({ ...budgetData, expenses: updatedExpenses, tags: updatedTags });
+      resetExpenseForm();
+    };
+
+    const deleteExpense = (id) => {
+      saveBudgetData({ ...budgetData, expenses: expenses.filter(e => e.id !== id) });
+    };
+
+    // ============================================================
+    // Allocations (leftover money targets)
+    // ============================================================
+    const [showAllocationForm, setShowAllocationForm] = React.useState(false);
+    const [editingAllocationId, setEditingAllocationId] = React.useState(null);
+    const [allocTitle, setAllocTitle] = React.useState('');
+    const [allocAmount, setAllocAmount] = React.useState('');
+    const [allocAccountId, setAllocAccountId] = React.useState(null);
+
+    const resetAllocationForm = () => {
+      setAllocTitle('');
+      setAllocAmount('');
+      setAllocAccountId(null);
+      setEditingAllocationId(null);
+      setShowAllocationForm(false);
+    };
+
+    const startEditAllocation = (alloc) => {
+      setEditingAllocationId(alloc.id);
+      setAllocTitle(alloc.title);
+      setAllocAmount(String(alloc.amount));
+      setAllocAccountId(alloc.accountId || null);
+      setShowAllocationForm(true);
+    };
+
+    const addOrUpdateAllocation = () => {
+      if (!allocTitle.trim() || !allocAmount) return;
+      let updatedAllocations;
+      if (editingAllocationId) {
+        updatedAllocations = allocations.map(a => a.id === editingAllocationId
+          ? { ...a, title: allocTitle.trim(), amount: parseFloat(allocAmount), accountId: allocAccountId }
+          : a
+        );
+      } else {
+        updatedAllocations = [...allocations, {
+          id: Date.now(),
+          title: allocTitle.trim(),
+          amount: parseFloat(allocAmount),
+          accountId: allocAccountId
+        }];
+      }
+      saveBudgetData({ ...budgetData, allocations: updatedAllocations });
+      resetAllocationForm();
+    };
+
+    const deleteAllocation = (id) => {
+      saveBudgetData({ ...budgetData, allocations: allocations.filter(a => a.id !== id) });
+    };
+
+    // Colors for the allocation bar segments
+    const segmentColors = [
+      'bg-green-500', 'bg-blue-500', 'bg-purple-500', 'bg-orange-500',
+      'bg-pink-500', 'bg-teal-500', 'bg-indigo-500', 'bg-yellow-500'
     ];
+
+    const getAccountName = (id) => accounts.find(a => a.id === id)?.name || null;
 
     return (
       <div className="flex flex-col min-h-screen bg-gray-50 pb-20">
@@ -3832,8 +4015,8 @@ export default function BeatTheBet() {
               <DollarSign className="w-8 h-8" />
             </div>
             <div>
-              <h1 className="text-2xl font-bold">What You're Protecting</h1>
-              <p className="text-sm opacity-90">Your bills, debts, and goals</p>
+              <h1 className="text-2xl font-bold">My Budget</h1>
+              <p className="text-sm opacity-90">Know exactly where your money goes</p>
             </div>
           </div>
         </div>
@@ -3841,226 +4024,398 @@ export default function BeatTheBet() {
         <div className="flex-1 p-6 overflow-y-auto">
           <div className="max-w-md mx-auto space-y-6">
 
-
             {/* Intro */}
             <div className="bg-blue-50 border-l-4 border-blue-500 rounded-lg p-4">
-              <p className="text-sm text-gray-700">Add your real bills and debts. This is a reminder of what staying clean actually protects. Enter what you used to spend daily and we'll show you how close you are to covering each one.</p>
+              <p className="text-sm text-gray-700">Add your income and expenses below. We'll work out exactly how much you have left over each pay, and help you decide where it goes.</p>
             </div>
 
-            {/* Daily spend — powers the "days away" calculation */}
-            <div className="bg-white rounded-xl shadow-md p-5" onClick={(e) => e.stopPropagation()}>
-              <h3 className="font-bold text-gray-800 mb-1">What did you spend daily on gambling?</h3>
-              <p className="text-xs text-gray-500 mb-3">Optional — used to show how many days of not gambling covers each liability.</p>
-              <div className="flex items-center gap-3">
-                <div className="flex items-center gap-1 border-2 border-gray-300 rounded-lg px-3 focus-within:border-green-500 focus-within:ring-2 focus-within:ring-green-200">
-                  <span className="text-gray-500 font-semibold">$</span>
-                  <input
-                    ref={dailySpendInputRef}
-                    type="number"
-                    defaultValue={dailyGamblingSpend || ''}
-                    placeholder="0"
-                    min="0"
-                    className="w-24 text-2xl font-bold py-2 focus:outline-none text-center bg-transparent"
-                  />
-                  <span className="text-gray-400 text-sm">/ day</span>
-                </div>
-                <button
-                  onClick={handleSaveDailySpend}
-                  className="flex-1 bg-green-500 hover:bg-green-600 text-white rounded-lg py-3 font-semibold transition-colors"
-                >
-                  {dailyGamblingSpend > 0 ? 'Update' : 'Set Amount'}
+            {/* ============================================ */}
+            {/* BANK ACCOUNTS */}
+            {/* ============================================ */}
+            <div className="bg-white rounded-xl shadow-md p-5">
+              <div className="flex items-center justify-between mb-3">
+                <h3 className="font-bold text-gray-800">Bank Accounts</h3>
+                <button onClick={() => setShowAccountForm(!showAccountForm)} className="text-blue-600 hover:text-blue-700 font-semibold text-sm">
+                  {showAccountForm ? 'Cancel' : '+ Add'}
                 </button>
+              </div>
+              <p className="text-xs text-gray-500 mb-3">Add your accounts so you can assign expenses and savings to the right place.</p>
+
+              {showAccountForm && (
+                <div className="flex gap-2 mb-3">
+                  <input
+                    type="text"
+                    value={newAccountName}
+                    onChange={(e) => setNewAccountName(e.target.value)}
+                    onKeyPress={(e) => e.key === 'Enter' && addAccount()}
+                    placeholder="e.g. Everyday, Savings, Joint"
+                    className="flex-1 p-2.5 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-green-500 focus:border-transparent"
+                  />
+                  <button onClick={addAccount} disabled={!newAccountName.trim()} className="bg-green-500 hover:bg-green-600 disabled:bg-gray-300 text-white px-4 rounded-lg font-semibold text-sm">Add</button>
+                </div>
+              )}
+
+              {accounts.length === 0 ? (
+                <p className="text-center text-gray-400 text-sm py-2">No accounts added yet.</p>
+              ) : (
+                <div className="space-y-2">
+                  {accounts.map(acc => (
+                    <div key={acc.id} className="flex items-center justify-between p-2.5 bg-gray-50 rounded-lg">
+                      <span className="text-sm font-medium text-gray-800">{acc.name}</span>
+                      <button onClick={() => deleteAccount(acc.id)} className="text-gray-400 hover:text-red-500 text-xs px-2 py-1 rounded hover:bg-red-50">Remove</button>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+
+            {/* ============================================ */}
+            {/* BOX 1: INCOME & EXPENSES */}
+            {/* ============================================ */}
+            <div className="bg-white rounded-xl shadow-md p-5">
+              <h3 className="font-bold text-gray-800 mb-4">Income & Expenses</h3>
+
+              {/* Primary Income */}
+              <div className="mb-4">
+                <p className="text-sm font-semibold text-gray-700 mb-2">Your Pay</p>
+                {editingIncome ? (
+                  <div className="bg-green-50 border-2 border-green-200 rounded-xl p-4 space-y-3">
+                    <div className="flex items-center gap-1 border border-gray-300 rounded-lg px-3 bg-white focus-within:ring-2 focus-within:ring-green-500">
+                      <span className="text-gray-500 font-semibold">$</span>
+                      <input
+                        type="number"
+                        value={tempIncomeAmount}
+                        onChange={(e) => setTempIncomeAmount(e.target.value)}
+                        placeholder="0.00"
+                        className="w-full p-2.5 focus:outline-none bg-transparent"
+                      />
+                    </div>
+                    <select
+                      value={tempIncomeFreq}
+                      onChange={(e) => setTempIncomeFreq(e.target.value)}
+                      className="w-full p-2.5 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-green-500 bg-white"
+                    >
+                      {Object.keys(frequencyLabels).map(f => <option key={f} value={f}>{frequencyLabels[f]}</option>)}
+                    </select>
+                    <div className="flex gap-2">
+                      <button onClick={() => setEditingIncome(false)} className="flex-1 py-2 text-sm bg-gray-200 hover:bg-gray-300 text-gray-700 rounded-lg font-semibold">Cancel</button>
+                      <button onClick={savePrimaryIncome} disabled={!tempIncomeAmount} className="flex-1 py-2 text-sm bg-green-500 hover:bg-green-600 disabled:bg-gray-300 text-white rounded-lg font-semibold">Save</button>
+                    </div>
+                  </div>
+                ) : (
+                  <button onClick={() => setEditingIncome(true)} className="w-full flex items-center justify-between p-3 bg-green-50 border border-green-200 rounded-lg hover:bg-green-100 transition-colors text-left">
+                    <div>
+                      {primaryIncome.amount ? (
+                        <>
+                          <p className="font-bold text-gray-800">${parseFloat(primaryIncome.amount).toLocaleString()}</p>
+                          <p className="text-xs text-gray-500">{frequencyLabels[primaryFrequency]}</p>
+                        </>
+                      ) : (
+                        <p className="text-sm text-gray-500">Tap to set your pay amount</p>
+                      )}
+                    </div>
+                    <Edit className="w-4 h-4 text-gray-400" />
+                  </button>
+                )}
+              </div>
+
+              {/* Additional Income */}
+              <div className="mb-4">
+                <div className="flex items-center justify-between mb-2">
+                  <p className="text-sm font-semibold text-gray-700">Additional Income</p>
+                  <button onClick={() => setShowAdditionalIncomeForm(!showAdditionalIncomeForm)} className="text-blue-600 hover:text-blue-700 font-semibold text-xs">
+                    {showAdditionalIncomeForm ? 'Cancel' : '+ Add'}
+                  </button>
+                </div>
+                <p className="text-xs text-gray-500 mb-2">Rental income, bonuses, side income — anything extra.</p>
+
+                {showAdditionalIncomeForm && (
+                  <div className="bg-blue-50 border-2 border-blue-200 rounded-xl p-4 mb-2 space-y-2">
+                    <input
+                      type="text"
+                      value={newIncomeTitle}
+                      onChange={(e) => setNewIncomeTitle(e.target.value)}
+                      placeholder="e.g. Rental income, Bonus"
+                      className="w-full p-2.5 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-blue-500"
+                    />
+                    <div className="flex gap-2">
+                      <div className="flex items-center gap-1 flex-1 border border-gray-300 rounded-lg px-2.5 bg-white focus-within:ring-2 focus-within:ring-blue-500">
+                        <span className="text-gray-500 text-sm">$</span>
+                        <input
+                          type="number"
+                          value={newIncomeAmount}
+                          onChange={(e) => setNewIncomeAmount(e.target.value)}
+                          placeholder="Amount"
+                          className="flex-1 p-2.5 focus:outline-none text-sm bg-transparent"
+                        />
+                      </div>
+                      <select value={newIncomeFreq} onChange={(e) => setNewIncomeFreq(e.target.value)} className="flex-1 p-2.5 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-blue-500">
+                        {Object.keys(frequencyLabels).map(f => <option key={f} value={f}>{frequencyLabels[f]}</option>)}
+                      </select>
+                    </div>
+                    <button onClick={addAdditionalIncome} disabled={!newIncomeTitle.trim() || !newIncomeAmount} className="w-full bg-blue-500 hover:bg-blue-600 disabled:bg-gray-300 text-white rounded-lg py-2 font-semibold text-sm">Add</button>
+                  </div>
+                )}
+
+                {additionalIncome.length > 0 && (
+                  <div className="space-y-2">
+                    {additionalIncome.map(inc => (
+                      <div key={inc.id} className="flex items-center justify-between p-2.5 bg-gray-50 rounded-lg">
+                        <div>
+                          <p className="text-sm font-medium text-gray-800">{inc.title}</p>
+                          <p className="text-xs text-gray-500">${inc.amount.toLocaleString()} {frequencyLabels[inc.frequency]}</p>
+                        </div>
+                        <button onClick={() => deleteAdditionalIncome(inc.id)} className="text-gray-400 hover:text-red-500 text-xs px-2 py-1 rounded hover:bg-red-50">✕</button>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+
+              <div className="border-t border-gray-200 my-4"></div>
+
+              {/* Expenses */}
+              <div>
+                <div className="flex items-center justify-between mb-2">
+                  <p className="text-sm font-semibold text-gray-700">Expenses</p>
+                  <button onClick={() => { resetExpenseForm(); setShowExpenseForm(!showExpenseForm); }} className="text-blue-600 hover:text-blue-700 font-semibold text-xs">
+                    {showExpenseForm ? 'Cancel' : '+ Add'}
+                  </button>
+                </div>
+
+                {showExpenseForm && (
+                  <div className="bg-blue-50 border-2 border-blue-200 rounded-xl p-4 mb-3 space-y-2">
+                    <input
+                      type="text"
+                      value={expTitle}
+                      onChange={(e) => setExpTitle(e.target.value)}
+                      placeholder="e.g. Rent, Netflix, Car loan"
+                      className="w-full p-2.5 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-blue-500"
+                    />
+                    <div className="flex gap-2">
+                      <div className="flex items-center gap-1 flex-1 border border-gray-300 rounded-lg px-2.5 bg-white focus-within:ring-2 focus-within:ring-blue-500">
+                        <span className="text-gray-500 text-sm">$</span>
+                        <input
+                          type="number"
+                          value={expAmount}
+                          onChange={(e) => setExpAmount(e.target.value)}
+                          placeholder="Amount"
+                          className="flex-1 p-2.5 focus:outline-none text-sm bg-transparent"
+                        />
+                      </div>
+                      <select value={expFreq} onChange={(e) => setExpFreq(e.target.value)} className="flex-1 p-2.5 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-blue-500">
+                        {Object.keys(frequencyLabels).map(f => <option key={f} value={f}>{frequencyLabels[f]}</option>)}
+                      </select>
+                    </div>
+
+                    {/* Tag selector */}
+                    {!showNewTagInput ? (
+                      <div className="flex gap-2">
+                        <select value={expTag} onChange={(e) => setExpTag(e.target.value)} className="flex-1 p-2.5 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-blue-500">
+                          {tags.map(t => <option key={t} value={t}>{t}</option>)}
+                        </select>
+                        <button onClick={() => setShowNewTagInput(true)} className="bg-gray-200 hover:bg-gray-300 text-gray-700 px-3 rounded-lg text-sm font-semibold">New Tag</button>
+                      </div>
+                    ) : (
+                      <div className="flex gap-2">
+                        <input
+                          type="text"
+                          value={newTagInput}
+                          onChange={(e) => setNewTagInput(e.target.value)}
+                          placeholder="New tag name"
+                          className="flex-1 p-2.5 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-blue-500"
+                        />
+                        <button onClick={() => setShowNewTagInput(false)} className="bg-gray-200 hover:bg-gray-300 text-gray-700 px-3 rounded-lg text-sm font-semibold">Cancel</button>
+                      </div>
+                    )}
+
+                    {/* Account selector */}
+                    {accounts.length > 0 && (
+                      <select value={expAccountId || ''} onChange={(e) => setExpAccountId(e.target.value ? parseInt(e.target.value) : null)} className="w-full p-2.5 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-blue-500">
+                        <option value="">No account assigned</option>
+                        {accounts.map(acc => <option key={acc.id} value={acc.id}>{acc.name}</option>)}
+                      </select>
+                    )}
+
+                    <button onClick={addOrUpdateExpense} disabled={!expTitle.trim() || !expAmount} className="w-full bg-blue-500 hover:bg-blue-600 disabled:bg-gray-300 text-white rounded-lg py-2.5 font-semibold text-sm">
+                      {editingExpenseId ? 'Save Changes' : 'Add Expense'}
+                    </button>
+                  </div>
+                )}
+
+                {expenses.length === 0 ? (
+                  <p className="text-center text-gray-400 text-sm py-2">No expenses added yet.</p>
+                ) : (
+                  <div className="space-y-2">
+                    {expenses.map(exp => (
+                      <div key={exp.id} className="p-3 bg-gray-50 rounded-lg">
+                        <div className="flex items-start justify-between gap-2">
+                          <div className="flex-1 min-w-0">
+                            <div className="flex items-center gap-2 flex-wrap mb-0.5">
+                              <p className="text-sm font-semibold text-gray-800">{exp.title}</p>
+                              {exp.tag && <span className="text-xs bg-blue-100 text-blue-700 px-2 py-0.5 rounded-full">{exp.tag}</span>}
+                            </div>
+                            <p className="text-xs text-gray-500">
+                              ${exp.amount.toLocaleString()} {frequencyLabels[exp.frequency]}
+                              {getAccountName(exp.accountId) && ` · ${getAccountName(exp.accountId)}`}
+                            </p>
+                          </div>
+                          <div className="flex items-center gap-1 flex-shrink-0">
+                            <button onClick={() => startEditExpense(exp)} className="text-gray-400 hover:text-blue-500 text-xs px-2 py-1 rounded hover:bg-blue-50">Edit</button>
+                            <button onClick={() => deleteExpense(exp.id)} className="text-gray-400 hover:text-red-500 text-xs px-2 py-1 rounded hover:bg-red-50">✕</button>
+                          </div>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+
+              <div className="border-t border-gray-200 my-4"></div>
+
+              {/* Output Summary */}
+              <div className="space-y-2">
+                <div className="flex justify-between text-sm">
+                  <span className="text-gray-600">Income per {frequencyLabels[primaryFrequency].toLowerCase()}</span>
+                  <span className="font-semibold text-gray-800">${totalIncomePerCycle.toLocaleString(undefined, { maximumFractionDigits: 2 })}</span>
+                </div>
+                <div className="flex justify-between text-sm">
+                  <span className="text-gray-600">Expenses per {frequencyLabels[primaryFrequency].toLowerCase()}</span>
+                  <span className="font-semibold text-gray-800">${totalExpensesPerCycle.toLocaleString(undefined, { maximumFractionDigits: 2 })}</span>
+                </div>
+                <div className={`flex justify-between items-center p-3 rounded-lg mt-2 ${isOverBudget ? 'bg-red-50 border border-red-200' : 'bg-green-50 border border-green-200'}`}>
+                  <span className={`font-bold ${isOverBudget ? 'text-red-700' : 'text-green-700'}`}>
+                    {isOverBudget ? 'Over budget' : 'Leftover'}
+                  </span>
+                  <span className={`text-xl font-bold ${isOverBudget ? 'text-red-700' : 'text-green-700'}`}>
+                    {isOverBudget ? '-' : ''}${Math.abs(totalIncomePerCycle - totalExpensesPerCycle).toLocaleString(undefined, { maximumFractionDigits: 2 })}
+                  </span>
+                </div>
+                {isOverBudget && (
+                  <p className="text-xs text-red-600">Your expenses are higher than your income for this pay cycle. Something will need to change.</p>
+                )}
               </div>
             </div>
 
-                {/* My Liabilities */}
-                <div className="bg-white rounded-xl shadow-md p-6" onClick={(e) => e.stopPropagation()}>
-                  <div className="flex items-center justify-between mb-1">
-                    <h3 className="font-bold text-gray-800">My Liabilities</h3>
-                    <button
-                      onClick={() => setShowAddMilestone(!showAddMilestone)}
-                      className="text-blue-600 hover:text-blue-700 font-semibold text-sm"
-                    >
-                      {showAddMilestone ? 'Cancel' : '+ Add'}
-                    </button>
-                  </div>
-                  <p className="text-sm text-gray-500 mb-4">Add your actual bills, debts, and savings goals. The amounts are yours — update them to match your real situation.</p>
+            {/* ============================================ */}
+            {/* BOX 2: ALLOCATE THE LEFTOVER */}
+            {/* ============================================ */}
+            {!isOverBudget && leftover > 0 && (
+              <div className="bg-white rounded-xl shadow-md p-5">
+                <h3 className="font-bold text-gray-800 mb-1">Where should it go?</h3>
+                <p className="text-xs text-gray-500 mb-4">Decide how to split your ${leftover.toLocaleString(undefined, { maximumFractionDigits: 2 })} leftover each {frequencyLabels[primaryFrequency].toLowerCase()}.</p>
 
-                  {/* Add liability form */}
-                  {showAddMilestone && (
-                    <div className="bg-blue-50 border-2 border-blue-200 rounded-xl p-4 mb-4" onClick={(e) => e.stopPropagation()}>
-                      <h4 className="font-semibold text-gray-800 mb-3">Add a liability or goal</h4>
-                      <div className="space-y-3">
-                        <input
-                          type="text"
-                          value={newLabel}
-                          onChange={(e) => setNewLabel(e.target.value)}
-                          placeholder="e.g. Telstra bill, Car loan, Credit card..."
-                          className="w-full p-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent text-sm"
-                        />
-                        <div className="flex gap-2">
-                          <div className="flex items-center gap-1 flex-1 border border-gray-300 rounded-lg px-2.5 focus-within:ring-2 focus-within:ring-blue-500">
-                            <span className="text-gray-500 text-sm">$</span>
-                            <input
-                              type="number"
-                              value={newAmount}
-                              onChange={(e) => setNewAmount(e.target.value)}
-                              placeholder="Amount"
-                              min="1"
-                              className="flex-1 p-2.5 focus:outline-none text-sm bg-transparent"
-                            />
-                          </div>
-                          <select
-                            value={newCategory}
-                            onChange={(e) => setNewCategory(e.target.value)}
-                            className="flex-1 p-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 text-sm"
-                          >
-                            {categoryOptions.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
-                          </select>
-                        </div>
-                        <button
-                          onClick={addMilestone}
-                          disabled={!newLabel.trim() || !newAmount}
-                          className="w-full bg-blue-500 hover:bg-blue-600 disabled:bg-gray-300 text-white rounded-lg py-2.5 font-semibold text-sm transition-colors"
-                        >
-                          Add
-                        </button>
-                      </div>
-                    </div>
-                  )}
-
-                  {/* Milestones list */}
-                  <div className="space-y-3">
-                    {milestones.map((milestone) => {
-                      const totalSaved = parseFloat(calculateSavings(getDaysClean()));
-                      const isReached = totalSaved >= milestone.amount;
-                      const daysUntil = dailyGamblingSpend > 0
-                        ? Math.max(0, Math.ceil((milestone.amount - totalSaved) / dailyGamblingSpend))
-                        : null;
-                      const progress = Math.min((totalSaved / milestone.amount) * 100, 100);
-                      const cats = {
-                        essentials: { bg: 'bg-green-50', border: 'border-green-400', badge: 'bg-green-100 text-green-700', bar: 'bg-green-400', label: 'Essentials' },
-                        bills:      { bg: 'bg-blue-50',  border: 'border-blue-400',  badge: 'bg-blue-100 text-blue-700',  bar: 'bg-blue-400',  label: 'Bills' },
-                        debt:       { bg: 'bg-orange-50',border: 'border-orange-400',badge: 'bg-orange-100 text-orange-700',bar: 'bg-orange-400',label: 'Debt' },
-                        savings:    { bg: 'bg-purple-50',border: 'border-purple-400',badge: 'bg-purple-100 text-purple-700',bar: 'bg-purple-400',label: 'Savings' },
-                        future:     { bg: 'bg-indigo-50',border: 'border-indigo-400',badge: 'bg-indigo-100 text-indigo-700',bar: 'bg-indigo-400',label: 'Future' },
-                      };
-                      const c = cats[milestone.category] || cats.bills;
-                      const isEditing = editingMilestone === milestone.id;
-
+                {/* Stacked bar showing the split */}
+                <div className="mb-4">
+                  <div className="w-full h-6 bg-gray-100 rounded-full overflow-hidden flex">
+                    {allocations.map((alloc, i) => {
+                      const pct = leftover > 0 ? ((parseFloat(alloc.amount) || 0) / leftover) * 100 : 0;
                       return (
-                        <div key={milestone.id} className={`border-l-4 ${c.border} ${isReached ? c.bg : 'bg-gray-50'} rounded-lg p-4`} onClick={(e) => e.stopPropagation()}>
-                          {isEditing ? (
-                            <div className="space-y-2">
-                              <input
-                                type="text"
-                                value={editLabel}
-                                onChange={(e) => setEditLabel(e.target.value)}
-                                className="w-full p-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                              />
-                              <div className="flex gap-2">
-                                <div className="flex items-center gap-1 flex-1 border border-gray-300 rounded-lg px-2 focus-within:ring-2 focus-within:ring-blue-500">
-                                  <span className="text-gray-500 text-sm">$</span>
-                                  <input
-                                    type="number"
-                                    value={editAmount}
-                                    onChange={(e) => setEditAmount(e.target.value)}
-                                    min="1"
-                                    className="flex-1 p-2 focus:outline-none text-sm bg-transparent"
-                                  />
-                                </div>
-                                <select
-                                  value={editCategory}
-                                  onChange={(e) => setEditCategory(e.target.value)}
-                                  className="flex-1 p-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-blue-500"
-                                >
-                                  {categoryOptions.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
-                                </select>
-                              </div>
-                              <div className="flex gap-2">
-                                <button onClick={() => setEditingMilestone(null)} className="flex-1 py-2 text-sm bg-gray-200 hover:bg-gray-300 text-gray-700 rounded-lg font-semibold">Cancel</button>
-                                <button onClick={saveEdit} disabled={!editLabel.trim() || !editAmount} className="flex-1 py-2 text-sm bg-blue-500 hover:bg-blue-600 disabled:bg-gray-300 text-white rounded-lg font-semibold">Save</button>
-                              </div>
-                            </div>
-                          ) : (
-                            <>
-                              <div className="flex items-start justify-between gap-2 mb-2">
-                                <div className="flex-1 min-w-0">
-                                  <div className="flex items-center gap-2 mb-1 flex-wrap">
-                                    <span className={`text-xs font-semibold px-2 py-0.5 rounded-full ${c.badge}`}>{c.label}</span>
-                                    {isReached && <span className="text-xs font-bold text-green-600">Reached</span>}
-                                  </div>
-                                  <p className={`font-semibold text-sm truncate ${isReached ? 'text-gray-900' : 'text-gray-600'}`}>{milestone.label}</p>
-                                  {isReached && milestone.description
-                                    ? <p className="text-xs text-gray-600 mt-0.5">{milestone.description}</p>
-                                    : !isReached && daysUntil !== null
-                                    ? <p className="text-xs text-gray-400 mt-0.5">{daysUntil} day{daysUntil !== 1 ? 's' : ''} of not gambling covers this</p>
-                                    : null
-                                  }
-                                </div>
-                                <div className="flex items-center gap-2 flex-shrink-0">
-                                  <p className={`text-base font-bold ${isReached ? 'text-green-600' : 'text-gray-400'}`}>${milestone.amount.toLocaleString()}</p>
-                                  <button onClick={() => startEdit(milestone)} className="text-gray-400 hover:text-blue-500 text-xs px-2 py-1 rounded hover:bg-blue-50 transition-colors">Edit</button>
-                                  <button onClick={() => deleteMilestone(milestone.id)} className="text-gray-400 hover:text-red-500 text-xs px-2 py-1 rounded hover:bg-red-50 transition-colors">✕</button>
-                                </div>
-                              </div>
-                              <div className="w-full bg-gray-200 rounded-full h-1.5">
-                                <div className={`h-1.5 rounded-full transition-all ${isReached ? 'bg-green-500' : c.bar}`} style={{ width: `${progress}%` }} />
-                              </div>
-                            </>
-                          )}
-                        </div>
+                        <div
+                          key={alloc.id}
+                          className={`${segmentColors[i % segmentColors.length]} h-full transition-all`}
+                          style={{ width: `${Math.min(pct, 100)}%` }}
+                          title={`${alloc.title}: $${alloc.amount}`}
+                        />
                       );
                     })}
-                    {milestones.length === 0 && (
-                      <div className="text-center py-6">
-                        <p className="text-gray-500 text-sm mb-2">No liabilities added yet.</p>
-                        <button onClick={() => setShowAddMilestone(true)} className="text-blue-600 font-semibold text-sm">Add your first one</button>
+                    {unallocated > 0 && (
+                      <div className="bg-gray-300 h-full transition-all" style={{ width: `${(unallocated / leftover) * 100}%` }} title={`Unallocated: $${unallocated.toFixed(2)}`} />
+                    )}
+                  </div>
+                  <div className="flex flex-wrap gap-3 mt-2">
+                    {allocations.map((alloc, i) => (
+                      <div key={alloc.id} className="flex items-center gap-1.5 text-xs text-gray-600">
+                        <div className={`w-2.5 h-2.5 rounded-full ${segmentColors[i % segmentColors.length]}`}></div>
+                        <span>{alloc.title}</span>
+                      </div>
+                    ))}
+                    {unallocated > 0 && (
+                      <div className="flex items-center gap-1.5 text-xs text-gray-500">
+                        <div className="w-2.5 h-2.5 rounded-full bg-gray-300"></div>
+                        <span>Unallocated</span>
                       </div>
                     )}
                   </div>
+                </div>
 
-                  {milestones.length > 0 && (
-                    <button
-                      onClick={() => { if (window.confirm('Reset to default liabilities?')) { saveMilestones(defaultMilestones); } }}
-                      className="mt-4 text-xs text-gray-400 hover:text-gray-600 w-full text-center"
-                    >
-                      Reset to defaults
+                {isOverAllocated && (
+                  <div className="bg-red-50 border border-red-200 rounded-lg p-3 mb-3">
+                    <p className="text-xs text-red-700 font-semibold">You've allocated more than your leftover amount. Adjust one of the boxes below.</p>
+                  </div>
+                )}
+
+                {/* Allocation form */}
+                {showAllocationForm && (
+                  <div className="bg-green-50 border-2 border-green-200 rounded-xl p-4 mb-3 space-y-2">
+                    <input
+                      type="text"
+                      value={allocTitle}
+                      onChange={(e) => setAllocTitle(e.target.value)}
+                      placeholder="e.g. Savings, Car fund, Holiday"
+                      className="w-full p-2.5 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-green-500"
+                    />
+                    <div className="flex items-center gap-1 border border-gray-300 rounded-lg px-2.5 bg-white focus-within:ring-2 focus-within:ring-green-500">
+                      <span className="text-gray-500 text-sm">$</span>
+                      <input
+                        type="number"
+                        value={allocAmount}
+                        onChange={(e) => setAllocAmount(e.target.value)}
+                        placeholder="Amount per pay"
+                        className="flex-1 p-2.5 focus:outline-none text-sm bg-transparent"
+                      />
+                    </div>
+                    {accounts.length > 0 && (
+                      <select value={allocAccountId || ''} onChange={(e) => setAllocAccountId(e.target.value ? parseInt(e.target.value) : null)} className="w-full p-2.5 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-green-500">
+                        <option value="">No account assigned</option>
+                        {accounts.map(acc => <option key={acc.id} value={acc.id}>{acc.name}</option>)}
+                      </select>
+                    )}
+                    <button onClick={addOrUpdateAllocation} disabled={!allocTitle.trim() || !allocAmount} className="w-full bg-green-500 hover:bg-green-600 disabled:bg-gray-300 text-white rounded-lg py-2.5 font-semibold text-sm">
+                      {editingAllocationId ? 'Save Changes' : 'Add Allocation'}
                     </button>
-                  )}
+                  </div>
+                )}
+
+                {/* Allocation list */}
+                <div className="space-y-2 mb-3">
+                  {allocations.map((alloc, i) => (
+                    <div key={alloc.id} className="flex items-center justify-between p-3 bg-gray-50 rounded-lg">
+                      <div className="flex items-center gap-2 flex-1 min-w-0">
+                        <div className={`w-2.5 h-2.5 rounded-full flex-shrink-0 ${segmentColors[i % segmentColors.length]}`}></div>
+                        <div className="min-w-0">
+                          <p className="text-sm font-semibold text-gray-800 truncate">{alloc.title}</p>
+                          {getAccountName(alloc.accountId) && <p className="text-xs text-gray-500">{getAccountName(alloc.accountId)}</p>}
+                        </div>
+                      </div>
+                      <div className="flex items-center gap-2 flex-shrink-0">
+                        <p className="font-bold text-gray-800">${parseFloat(alloc.amount).toLocaleString()}</p>
+                        <button onClick={() => startEditAllocation(alloc)} className="text-gray-400 hover:text-blue-500 text-xs px-2 py-1 rounded hover:bg-blue-50">Edit</button>
+                        <button onClick={() => deleteAllocation(alloc.id)} className="text-gray-400 hover:text-red-500 text-xs px-2 py-1 rounded hover:bg-red-50">✕</button>
+                      </div>
+                    </div>
+                  ))}
                 </div>
 
-                                {/* The Real Message */}
-                <div className="bg-blue-50 border-l-4 border-blue-500 rounded-lg p-5">
-                  <p className="text-sm text-gray-700 leading-relaxed mb-3">
-                    <strong>This isn't about what you've lost.</strong>
-                  </p>
-                  <p className="text-sm text-gray-700 leading-relaxed">
-                    It's about what you're getting back. Money that stays in your account. 
-                    Less financial stress. {userAgeRange === '18-25' ? 'Building your future.' : userAgeRange === '26-35' ? 'Building the life you want.' : 'Being able to say yes to your family.'} 
-                    {' '}The relief of checking your balance and it actually being there.
-                  </p>
-                </div>
+                <button onClick={() => { resetAllocationForm(); setShowAllocationForm(!showAllocationForm); }} className="w-full border-2 border-dashed border-gray-300 hover:border-green-400 hover:bg-green-50 text-gray-600 hover:text-green-700 rounded-lg py-2.5 font-semibold text-sm transition-colors mb-3">
+                  {showAllocationForm ? 'Cancel' : '+ Add Allocation'}
+                </button>
 
-                <div className="bg-green-50 border-l-4 border-green-500 rounded-lg p-5">
-                  <p className="text-sm text-gray-700 leading-relaxed">
-                    <strong>Every day you don't gamble is a day you're {userAgeRange === '18-25' ? 'investing in yourself' : userAgeRange === '26-35' ? 'building your future' : 'providing for what matters'}.</strong> 
-                    {' '}It's never too late to turn this around.
-                  </p>
+                {/* Unallocated summary */}
+                <div className={`flex justify-between items-center p-3 rounded-lg ${unallocated > 0 ? 'bg-yellow-50 border border-yellow-200' : 'bg-gray-50'}`}>
+                  <span className="font-semibold text-gray-700">Unallocated</span>
+                  <span className={`text-lg font-bold ${unallocated > 0 ? 'text-yellow-700' : 'text-gray-400'}`}>
+                    ${unallocated.toLocaleString(undefined, { maximumFractionDigits: 2 })}
+                  </span>
                 </div>
-            {/* Payday Tracking */}
-            <PaydayTrackingSection 
-              paydaySettings={paydaySettings}
-              setPaydaySettings={setPaydaySettings}
-            />
-
+              </div>
+            )}
 
           </div>
         </div>
       </div>
     );
   });
-
   const ShopPage = () => {
     // Available interests
     const availableInterests = [
