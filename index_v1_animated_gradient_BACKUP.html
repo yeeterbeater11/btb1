@@ -50,62 +50,118 @@
       min-height: 100vh;
       color: white;
       font-family: -apple-system, sans-serif;
-      background-color: #1a1a2e;
+      background: linear-gradient(135deg, #2563eb 0%, #7c3aed 50%, #db2777 100%);
+      background-size: 200% 200%;
+      animation: gradientShift 8s ease infinite;
+      position: relative;
+      overflow: hidden;
+    }
+
+    /* Soft ambient glow behind the logo */
+    #loading::before {
+      content: '';
+      position: absolute;
+      width: 320px;
+      height: 320px;
+      background: radial-gradient(circle, rgba(255,255,255,0.18) 0%, rgba(255,255,255,0) 70%);
+      border-radius: 50%;
+      animation: glowPulse 2.6s ease-in-out infinite;
     }
 
     #loading .logo-wrap {
-      width: 96px;
-      height: 96px;
-      margin-bottom: 20px;
+      position: relative;
+      z-index: 1;
+      width: 112px;
+      height: 112px;
+      margin-bottom: 28px;
+      border-radius: 28px;
+      background: rgba(255, 255, 255, 0.08);
+      backdrop-filter: blur(6px);
       display: flex;
       align-items: center;
       justify-content: center;
-      opacity: 0;
-      animation: logoFadeIn 0.5s ease 0.1s both;
+      box-shadow: 0 8px 32px rgba(0,0,0,0.25);
+      animation: logoEntrance 0.7s cubic-bezier(0.34, 1.56, 0.64, 1) both,
+                 logoFloat 3.2s ease-in-out 0.7s infinite;
     }
 
     #loading img {
-      width: 96px;
-      height: 96px;
+      width: 76px;
+      height: 76px;
       object-fit: contain;
+      filter: drop-shadow(0 4px 12px rgba(0,0,0,0.3));
     }
 
     #loading .brand {
-      font-size: 17px;
-      font-weight: 600;
+      position: relative;
+      z-index: 1;
+      font-size: 22px;
+      font-weight: 700;
       letter-spacing: -0.01em;
-      margin: 0 0 28px 0;
-      color: rgba(255,255,255,0.92);
+      margin: 0 0 10px 0;
       opacity: 0;
-      animation: textFadeIn 0.5s ease 0.25s both;
+      animation: fadeUp 0.6s ease 0.3s both;
     }
 
-    /* Simple static spinner - no bounce, no pulse, one quiet motion */
-    #loading .spinner {
-      width: 22px;
-      height: 22px;
-      border: 2.5px solid rgba(255,255,255,0.15);
-      border-top-color: rgba(255,255,255,0.7);
+    #loading p {
+      position: relative;
+      z-index: 1;
+      font-size: 14px;
+      opacity: 0;
+      color: rgba(255,255,255,0.8);
+      margin: 0 0 22px 0;
+      min-height: 18px;
+      animation: fadeUp 0.6s ease 0.45s both;
+    }
+
+    /* Three-dot loading indicator, calmer than a spinner */
+    #loading .dots {
+      position: relative;
+      z-index: 1;
+      display: flex;
+      gap: 6px;
+      opacity: 0;
+      animation: fadeUp 0.6s ease 0.6s both;
+    }
+    #loading .dots span {
+      width: 7px;
+      height: 7px;
       border-radius: 50%;
-      animation: spin 0.8s linear infinite;
-      opacity: 0;
-      animation: spin 0.8s linear infinite, textFadeIn 0.5s ease 0.35s both;
+      background: rgba(255,255,255,0.9);
+      animation: dotBounce 1.2s ease-in-out infinite;
     }
+    #loading .dots span:nth-child(2) { animation-delay: 0.15s; }
+    #loading .dots span:nth-child(3) { animation-delay: 0.3s; }
 
-    @keyframes logoFadeIn {
-      0% { opacity: 0; transform: scale(0.96); }
-      100% { opacity: 1; transform: scale(1); }
+    @keyframes gradientShift {
+      0%, 100% { background-position: 0% 50%; }
+      50% { background-position: 100% 50%; }
     }
-    @keyframes textFadeIn {
-      0% { opacity: 0; }
-      100% { opacity: 1; }
+    @keyframes glowPulse {
+      0%, 100% { transform: scale(1); opacity: 0.7; }
+      50% { transform: scale(1.15); opacity: 1; }
     }
-    @keyframes spin {
-      to { transform: rotate(360deg); }
+    @keyframes logoEntrance {
+      0% { transform: scale(0.5) rotate(-8deg); opacity: 0; }
+      100% { transform: scale(1) rotate(0deg); opacity: 1; }
+    }
+    @keyframes logoFloat {
+      0%, 100% { transform: translateY(0); }
+      50% { transform: translateY(-6px); }
+    }
+    @keyframes fadeUp {
+      0% { transform: translateY(8px); opacity: 0; }
+      100% { transform: translateY(0); opacity: 1; }
+    }
+    @keyframes dotBounce {
+      0%, 80%, 100% { transform: translateY(0); opacity: 0.5; }
+      40% { transform: translateY(-6px); opacity: 1; }
     }
     @media (prefers-reduced-motion: reduce) {
-      #loading .logo-wrap, #loading .brand { animation: none !important; opacity: 1 !important; }
-      #loading .spinner { animation: none !important; opacity: 0.7 !important; }
+      #loading, #loading::before, #loading .logo-wrap, #loading .brand, #loading p, #loading .dots, #loading .dots span {
+        animation: none !important;
+        opacity: 1 !important;
+      }
     }
 
     ::-webkit-scrollbar { width: 6px; }
@@ -120,9 +176,34 @@
       <img src="/logotransparent.png" alt="Beat the Bet" />
     </div>
     <p class="brand">Beat the Bet</p>
-    <div class="spinner"></div>
+    <p id="loading-message">Every day counts</p>
+    <div class="dots"><span></span><span></span><span></span></div>
   </div>
   <div id="root"></div>
+
+  <script>
+    // Rotate a few supportive lines while the app loads
+    (function () {
+      const messages = [
+        'Every day counts',
+        'Loading your progress',
+        'Almost there'
+      ];
+      let i = 0;
+      const el = document.getElementById('loading-message');
+      if (el) {
+        setInterval(() => {
+          i = (i + 1) % messages.length;
+          el.style.opacity = '0';
+          setTimeout(() => {
+            el.textContent = messages[i];
+            el.style.transition = 'opacity 0.3s ease';
+            el.style.opacity = '0.8';
+          }, 250);
+        }, 1800);
+      }
+    })();
+  </script>
 
   <script>
     fetch('/beat-the-bet.jsx')
