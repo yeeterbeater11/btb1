@@ -193,10 +193,11 @@ root.render(React.createElement(BeatTheBet));
         eval(transformed);
       })
       .catch(err => {
+        console.error('Beat the Bet load failure:', err, err && err.stack);
         document.getElementById('loading').style.display = 'none';
         document.getElementById('root').innerHTML =
           '<div style="color:white;padding:40px;font-family:sans-serif;background:#1a1a2e;min-height:100vh;">' +
-          '<h2>Failed to load app</h2><pre style="margin-top:16px;opacity:0.7;font-size:13px;">' + err + '</pre></div>';
+          '<h2>Failed to load app</h2><pre style="margin-top:16px;opacity:0.7;font-size:13px;">' + err + '\n\n' + (err && err.stack || '') + '</pre></div>';
       });
   </script>
 </body>
