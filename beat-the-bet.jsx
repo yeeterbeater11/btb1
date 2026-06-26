@@ -1354,6 +1354,12 @@ export default function BeatTheBet() {
 
     ]).then(() => {
       console.log('Data restore complete');
+      // Force a full reload so every piece of React state (music likes,
+      // budget, journal, badges, etc.) re-initializes fresh from the
+      // newly-restored localStorage. Without this, state from a previous
+      // account can keep showing even after localStorage is corrected,
+      // because useState's lazy initializer only runs once on first mount.
+      window.location.reload();
     });
 
     // Check admin status after login
