@@ -246,7 +246,7 @@ root.render(React.createElement(BeatTheBet));
           console.warn('Warning: cleaned JSX still contains export/import statements. Check beat-the-bet.jsx for unusual formatting near the top-level export.');
         }
 
-        const transformed = Babel.transform(withMount, { presets: ['react'] }).code;
+        const transformed = Babel.transform(withMount, { presets: [['react', { runtime: 'classic' }]] }).code;
 
         // Hide loading screen
         document.getElementById('loading').style.display = 'none';
