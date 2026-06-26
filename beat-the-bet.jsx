@@ -1329,11 +1329,27 @@ export default function BeatTheBet() {
     const { data, error } = await supabase.auth.signUp({ email, password });
     if (error) throw new Error(error.message || error.error_description || 'Sign up failed');
 
+    // Supabase returns the user object directly at the top level when email
+    // confirmation is required (no session yet), or nested under `user` when
+    // a session is created immediately. Handle both shapes defensively.
+    const signedUpUser = data && data.user ? data.user : data;
+    if (!signedUpUser || !signedUpUser.id) {
+      throw new Error('Something went wrong creating your account. Please try again.');
+    }
+
+    // If there's no access_token, email confirmation is required and no
+    // session exists yet - don't pretend the user is logged in.
+    const hasSession = !!data.access_token;
+
+    if (!hasSession) {
+      return { needsEmailConfirmation: true, email };
+    }
+
     const user = {
-      id: data.user.id,
-      email: data.user.email,
+      id: signedUpUser.id,
+      email: signedUpUser.email,
       username: '',
-      createdAt: data.user.created_at,
+      createdAt: signedUpUser.created_at,
       profileComplete: false
     };
 
@@ -9147,8 +9163,13 @@ Keep going! Every day counts. 💪
 
       setLoading(true);
       try {
-        await realSignup(email, password, confirmPassword);
-        showSuccess('Account created successfully!');
+        const result = await realSignup(email, password, confirmPassword);
+        if (result && result.needsEmailConfirmation) {
+          showSuccess('Check your email to confirm your account, then log in.');
+          setAuthScreen('login');
+        } else {
+          showSuccess('Account created successfully!');
+        }
       } catch (error) {
         setSignupError(error.message || 'Could not create account. Please try again.');
       } finally {
