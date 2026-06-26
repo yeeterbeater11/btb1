@@ -59,7 +59,7 @@
   <div id="root"></div>
 
   <script>
-    fetch('/beat-the-bet.jsx')
+    fetch('/beat-the-bet.jsx?v=' + Date.now(), { cache: 'no-store' })
       .then(r => r.text())
       .then(code => {
 // Remove "export default" so Babel standalone can handle it
