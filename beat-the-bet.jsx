@@ -5311,6 +5311,8 @@ export default function BeatTheBet() {
     const reportedIdsRef = React.useRef(reportedIds);
     React.useEffect(() => { reportedIdsRef.current = reportedIds; }, [reportedIds]);
     const messagesEndRef = React.useRef(null);
+    const messagesContainerRef = React.useRef(null);
+    const prevMessageCountRef = React.useRef(0);
     const unsubscribeRef = React.useRef(null);
 
     // ============================================================
@@ -5633,9 +5635,25 @@ export default function BeatTheBet() {
       return () => clearInterval(interval);
     }, [chatRoom]);
 
-    // Scroll to bottom when messages change
+    // Scroll to bottom only when a genuinely new message arrives (not on
+    // every poll, which creates a new array reference even when nothing
+    // changed), and only if the user is already near the bottom - so
+    // scrolling up to read history doesn't keep getting yanked back down.
     React.useEffect(() => {
-      messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+      const isNewMessage = messages.length > prevMessageCountRef.current;
+      prevMessageCountRef.current = messages.length;
+
+      if (!isNewMessage) return;
+
+      const container = messagesContainerRef.current;
+      if (!container) return;
+
+      const distanceFromBottom = container.scrollHeight - container.scrollTop - container.clientHeight;
+      const isNearBottom = distanceFromBottom < 150;
+
+      if (isNearBottom) {
+        messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+      }
     }, [messages]);
 
     const saveUsername = () => {
@@ -5793,6 +5811,49 @@ export default function BeatTheBet() {
       }
     };
 
+    const deleteOwnMessage = async (msg) => {
+      try {
+        const session = await supabase.getValidSession();
+        if (!session) {
+          showError('Please log in to delete messages.');
+          return;
+        }
+        const token = session.access_token;
+
+        const res = await fetch(
+          `${SUPABASE_URL}/rest/v1/messages?id=eq.${msg.id}`,
+          {
+            method: 'DELETE',
+            headers: {
+              'apikey': SUPABASE_ANON_KEY,
+              'Authorization': `Bearer ${token}`,
+              'Prefer': 'return=representation'
+            }
+          }
+        );
+
+        if (!res.ok) {
+          if (handleExpiredSession(res)) return;
+          const errBody = await res.json().catch(() => ({}));
+          console.error('Delete failed:', res.status, errBody);
+          showError('Could not delete message. Please try again.');
+          return;
+        }
+
+        const deletedRows = await res.json().catch(() => []);
+        if (!Array.isArray(deletedRows) || deletedRows.length === 0) {
+          console.warn('Delete returned 0 rows for message', msg.id);
+          showError('Could not delete this message right now.');
+          return;
+        }
+
+        setMessages(prev => prev.filter(m => m.id !== msg.id));
+        showSuccess('Message deleted.');
+      } catch (e) {
+        showError('Could not delete message.');
+      }
+    };
+
     const formatTime = (ts) => {
       if (!ts) return '';
       const d = new Date(ts);
@@ -5892,7 +5953,7 @@ export default function BeatTheBet() {
         </div>
 
         {/* Messages */}
-        <div className="flex-1 overflow-y-auto p-4 space-y-3">
+        <div ref={messagesContainerRef} className="flex-1 overflow-y-auto p-4 space-y-3">
           <div className="max-w-2xl mx-auto">
             {loadingMessages && (
               <div className="text-center py-8">
@@ -5936,6 +5997,15 @@ export default function BeatTheBet() {
                           title="Report message"
                         >
                           ⚑
+                        </button>
+                      )}
+                      {isOwn && (
+                        <button
+                          onClick={() => deleteOwnMessage(msg)}
+                          className="opacity-0 group-hover:opacity-100 text-indigo-200 hover:text-red-400 transition-all text-xs px-1"
+                          title="Delete message"
+                        >
+                          🗑
                         </button>
                       )}
                     </div>
@@ -5983,7 +6053,7 @@ export default function BeatTheBet() {
         {/* Guidelines */}
         <div className="bg-gray-50 border-t border-gray-200 px-4 py-2">
           <p className="text-xs text-gray-400 text-center">
-            Be kind and supportive. No gambling sites, links, or personal info. Hover a message to report it.
+            Be kind and supportive. No gambling sites, links, or personal info. Hover a message to report or delete it.
           </p>
         </div>
       </div>
