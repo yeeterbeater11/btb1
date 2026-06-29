@@ -5765,6 +5765,28 @@ export default function BeatTheBet() {
       setSending(false);
     };
 
+    // When a message is removed from the list (deleted or reported),
+    // the container can shrink and the browser doesn't preserve where
+    // you were looking, which feels like being yanked toward the top.
+    // This captures the distance from the bottom before the removal
+    // and restores it right after, so your view stays put.
+    const removeMessageKeepingScrollPosition = (messageId) => {
+      const container = messagesContainerRef.current;
+      const distanceFromBottomBefore = container
+        ? container.scrollHeight - container.scrollTop - container.clientHeight
+        : null;
+
+      setMessages(prev => prev.filter(m => m.id !== messageId));
+
+      if (container && distanceFromBottomBefore !== null) {
+        // Wait for the DOM to actually update with the removed message
+        // before re-measuring and restoring position.
+        requestAnimationFrame(() => {
+          container.scrollTop = container.scrollHeight - container.clientHeight - distanceFromBottomBefore;
+        });
+      }
+    };
+
     const reportMessage = async (msg) => {
       if (reportedIds.includes(msg.id)) return;
 
@@ -5787,7 +5809,7 @@ export default function BeatTheBet() {
               'Content-Type': 'application/json',
               'Prefer': 'return=representation'
             },
-            body: JSON.stringify({ flagged: true })
+            body: JSON.stringify({ flagged: true, moderation_level: 'high', moderation_reason: 'Reported by a user.' })
           }
         );
 
@@ -5811,7 +5833,7 @@ export default function BeatTheBet() {
         const updated = [...reportedIds, msg.id];
         setReportedIds(updated);
         localStorage.setItem('reportedMessageIds', JSON.stringify(updated));
-        setMessages(prev => prev.filter(m => m.id !== msg.id));
+        removeMessageKeepingScrollPosition(msg.id);
         showSuccess('Message reported and removed.');
       } catch (e) {
         showError('Could not report message.');
@@ -5854,7 +5876,7 @@ export default function BeatTheBet() {
           return;
         }
 
-        setMessages(prev => prev.filter(m => m.id !== msg.id));
+        removeMessageKeepingScrollPosition(msg.id);
         showSuccess('Message deleted.');
       } catch (e) {
         showError('Could not delete message.');
