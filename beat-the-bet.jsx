@@ -1168,6 +1168,24 @@ export default function BeatTheBet() {
   // ============================================================
   // Real Supabase Authentication
   // ============================================================
+  // ============================================================
+  // Detect an expired/invalid session from a 401 response and force
+  // the user back to the login screen with a clear message, rather
+  // than letting requests silently fail. Returns true if the session
+  // was found to be invalid and handled.
+  // ============================================================
+  const handleExpiredSession = (res) => {
+    if (res && res.status === 401) {
+      clearUserScopedStorage();
+      setCurrentUser(null);
+      setIsAuthenticated(false);
+      setAuthScreen('login');
+      showError('Your session has expired. Please log in again.');
+      return true;
+    }
+    return false;
+  };
+
   const realLogin = async (email, password) => {
     if (!validators.email(email)) throw new Error('Please enter a valid email address');
     if (!password) throw new Error('Please enter your password');
@@ -5539,6 +5557,9 @@ export default function BeatTheBet() {
           if (res.ok) {
             const data = await res.json();
             setMessages(data.filter(m => !m.flagged && !reportedIdsRef.current.includes(m.id)));
+          } else if (res.status === 401) {
+            clearInterval(interval);
+            handleExpiredSession(res);
           }
         } catch (e) {}
       }, 4000);
@@ -5677,6 +5698,7 @@ export default function BeatTheBet() {
         );
 
         if (!res.ok) {
+          if (handleExpiredSession(res)) return;
           const errBody = await res.json().catch(() => ({}));
           console.error('Report failed:', res.status, errBody);
           showError('Could not report message. Please try again.');
