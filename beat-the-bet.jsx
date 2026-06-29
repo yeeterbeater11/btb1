@@ -8899,14 +8899,6 @@ Keep going! Every day counts. 💪
                   <p className="text-gray-700">Recovery-safe design with no triggers</p>
                 </div>
               </li>
-              <li className="flex items-start">
-                <div className="bg-green-100 rounded-full p-1 mr-3 mt-1">
-                  <div className="w-2 h-2 bg-green-600 rounded-full"></div>
-                </div>
-                <div className="flex-1">
-                  <p className="text-gray-700">Always free core features with no ads</p>
-                </div>
-              </li>
             </ul>
           </div>
 
