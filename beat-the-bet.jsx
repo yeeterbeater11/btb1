@@ -1949,9 +1949,39 @@ export default function BeatTheBet() {
       "Recovery is worth fighting for.",
       "The urge will pass. It always does.",
       "You're building a better future.",
-      "Every clean day is a gift to yourself."
+      "Every clean day is a gift to yourself.",
+      "Chase the dopamine that builds you up, not the kind that tears you down.",
+      "Your future self is grateful for every choice you make today.",
+      "You don't have to be perfect. You just have to keep going.",
+      "The version of you that wins is the one who shows up again tomorrow."
     ];
-    const dailyQuote = quotes[new Date().getDate() % quotes.length];
+
+    // Pick 3 candidate quotes for today, seeded by the date so the same
+    // 3 options show up all day even if the page reloads.
+    const todayKey = new Date().toDateString();
+    const dayNumber = new Date().getDate() + new Date().getMonth() * 31;
+    const todaysOptions = [
+      quotes[dayNumber % quotes.length],
+      quotes[(dayNumber + 5) % quotes.length],
+      quotes[(dayNumber + 9) % quotes.length],
+    ];
+
+    const [dailyQuoteChoice, setDailyQuoteChoice] = useState(() => {
+      const saved = localStorage.getItem('dailyQuoteChoice');
+      if (!saved) return null;
+      try {
+        const parsed = JSON.parse(saved);
+        // Only use the saved choice if it was made today
+        return parsed.date === todayKey ? parsed.quote : null;
+      } catch (e) {
+        return null;
+      }
+    });
+
+    const chooseDailyQuote = (quote) => {
+      setDailyQuoteChoice(quote);
+      localStorage.setItem('dailyQuoteChoice', JSON.stringify({ date: todayKey, quote }));
+    };
 
     return (
       <div className="flex flex-col min-h-screen bg-gradient-to-b from-gray-50 to-gray-100 pb-20">
@@ -2123,13 +2153,31 @@ export default function BeatTheBet() {
             
             {/* Daily Quote */}
             <div className="bg-gradient-to-br from-indigo-500 to-purple-600 rounded-xl p-6 text-white shadow-lg">
-              <div className="flex items-start gap-3">
-
+              <p className="text-xs font-semibold opacity-75 uppercase tracking-wide mb-3">Today's Reminder</p>
+              {dailyQuoteChoice ? (
                 <div>
-                  <p className="text-xs font-semibold opacity-75 uppercase tracking-wide mb-2">Today's Reminder</p>
-                  <p className="text-lg font-semibold italic">"{dailyQuote}"</p>
+                  <p className="text-lg font-semibold italic mb-2">"{dailyQuoteChoice}"</p>
+                  <button
+                    onClick={() => setDailyQuoteChoice(null)}
+                    className="text-xs text-white opacity-70 hover:opacity-100 underline"
+                  >
+                    Choose a different one
+                  </button>
                 </div>
-              </div>
+              ) : (
+                <div className="space-y-2">
+                  <p className="text-sm opacity-90 mb-2">Pick the one that speaks to you today:</p>
+                  {todaysOptions.map((option, i) => (
+                    <button
+                      key={i}
+                      onClick={() => chooseDailyQuote(option)}
+                      className="w-full text-left bg-white bg-opacity-15 hover:bg-opacity-25 rounded-lg px-4 py-3 transition-colors"
+                    >
+                      <p className="text-sm font-semibold italic">"{option}"</p>
+                    </button>
+                  ))}
+                </div>
+              )}
             </div>
 
             {/* Daily Check-In */}
@@ -2153,6 +2201,7 @@ export default function BeatTheBet() {
                   ) : (
                     <button
                       onClick={() => {
+                        trackToolUsage('mindfulness');
                         setActiveTool('mindfulness');
                         setShowJournalCalendar(true);
                         setSelectedJournalDate(new Date().toISOString().split('T')[0]);
@@ -2293,14 +2342,14 @@ export default function BeatTheBet() {
     ];
 
     const healthyDopamineActivities = [
-      { icon: '', text: 'Go for a 10-minute walk right now', action: 'Walk' },
-      { icon: '🎵', text: 'Put on your favorite music and dance', action: 'Listen to music' },
-      { icon: '🍎', text: 'Eat something you enjoy', action: 'Eat a snack' },
+      { icon: '🏃', text: 'Go for a brisk walk or run right now', action: 'Move your body' },
+      { icon: '☀️', text: 'Step outside and get some sunlight and fresh air', action: 'Get outside' },
+      { icon: '🎵', text: 'Put on music you love and really listen, or dance', action: 'Listen to music' },
       { icon: '📞', text: 'Call or text someone who supports you', action: 'Reach out' },
-      { icon: '🎮', text: 'Play a video game for 15 minutes', action: 'Play a game' },
-      { icon: '✍️', text: 'Journal about this urge', action: 'Write it out' },
       { icon: '🧘', text: 'Do 5 deep breaths - in for 4, out for 6', action: 'Breathe' },
       { icon: '🚿', text: 'Take a cold shower', action: 'Cold shower' },
+      { icon: '✍️', text: 'Journal about this urge - get it out of your head', action: 'Write it out' },
+      { icon: '🤸', text: 'Do 20 push-ups, squats, or jumping jacks', action: 'Quick exercise' },
     ];
 
     const viewAnswers = () => {
@@ -2561,50 +2610,6 @@ export default function BeatTheBet() {
                   </div>
                 </div>
               </button>
-
-              {/* My Budget */}
-              <button
-                onClick={() => setActiveTool('my-budget')}
-                className="w-full bg-white rounded-xl shadow-md p-6 hover:shadow-lg transition-all text-left"
-              >
-                <div className="flex items-start">
-                  <div className="bg-yellow-100 p-3 rounded-full mr-4">
-                    <DollarSign className="w-6 h-6 text-yellow-600" />
-                  </div>
-                  <div className="flex-1">
-                    <div className="flex items-center justify-between">
-                      <h3 className="font-bold text-lg text-gray-800 mb-1">My Budget</h3>
-                      <ChevronRight className="w-5 h-5 text-gray-400" />
-                    </div>
-                    <p className="text-gray-600 text-sm">
-                      Know exactly where your money goes
-                    </p>
-                  </div>
-                </div>
-              </button>
-
-              {/* Music Discovery */}
-              <button
-                onClick={() => setActiveTool('music-discovery')}
-                className="w-full bg-white rounded-xl shadow-md p-6 hover:shadow-lg transition-all text-left"
-              >
-                <div className="flex items-start">
-                  <div className="bg-purple-100 p-3 rounded-full mr-4">
-                    <span className="text-2xl">🎵</span>
-                  </div>
-                  <div className="flex-1">
-                    <div className="flex items-center justify-between">
-                      <h3 className="font-bold text-lg text-gray-800 mb-1">Music Discovery</h3>
-                      <ChevronRight className="w-5 h-5 text-gray-400" />
-                    </div>
-                    <p className="text-gray-600 text-sm">
-                      {seedArtists.length === 0
-                        ? "Find new artists - healthy dopamine replacement"
-                        : `${seedArtists.length} artists • ${Object.keys(artistFeedback).filter(a => artistFeedback[a] === 'liked').length} liked`}
-                    </p>
-                  </div>
-                </div>
-              </button>
             </div>
           </div>
 
@@ -2629,9 +2634,53 @@ export default function BeatTheBet() {
             </div>
 
             <div className="space-y-3">
+              {/* My Budget */}
+              <button
+                onClick={() => { trackToolUsage('my-budget'); setActiveTool('my-budget'); }}
+                className="w-full bg-white rounded-xl shadow-md p-5 border-l-4 border-yellow-500 hover:shadow-lg transition-all text-left"
+              >
+                <div className="flex items-start">
+                  <div className="bg-yellow-100 p-2.5 rounded-full mr-3">
+                    <DollarSign className="w-5 h-5 text-yellow-600" />
+                  </div>
+                  <div className="flex-1">
+                    <div className="flex items-center justify-between mb-1">
+                      <h3 className="font-bold text-gray-800">My Budget</h3>
+                      <ChevronRight className="w-5 h-5 text-gray-400" />
+                    </div>
+                    <p className="text-gray-600 text-sm leading-relaxed">
+                      Know exactly where your money goes
+                    </p>
+                  </div>
+                </div>
+              </button>
+
+              {/* Music Discovery */}
+              <button
+                onClick={() => { trackToolUsage('music-discovery'); setActiveTool('music-discovery'); }}
+                className="w-full bg-white rounded-xl shadow-md p-5 border-l-4 border-pink-500 hover:shadow-lg transition-all text-left"
+              >
+                <div className="flex items-start">
+                  <div className="bg-pink-100 p-2.5 rounded-full mr-3">
+                    <span className="text-xl">🎵</span>
+                  </div>
+                  <div className="flex-1">
+                    <div className="flex items-center justify-between mb-1">
+                      <h3 className="font-bold text-gray-800">Music Discovery</h3>
+                      <ChevronRight className="w-5 h-5 text-gray-400" />
+                    </div>
+                    <p className="text-gray-600 text-sm leading-relaxed">
+                      {seedArtists.length === 0
+                        ? "Find new artists - healthy dopamine replacement"
+                        : `${seedArtists.length} artists • ${Object.keys(artistFeedback).filter(a => artistFeedback[a] === 'liked').length} liked`}
+                    </p>
+                  </div>
+                </div>
+              </button>
+
               {/* Private Journal & Mindfulness */}
               <button
-                onClick={() => setActiveTool('mindfulness')}
+                onClick={() => { trackToolUsage('mindfulness'); setActiveTool('mindfulness'); }}
                 className="w-full bg-white rounded-xl shadow-md p-5 border-l-4 border-purple-500 hover:shadow-lg transition-all text-left"
               >
                 <div className="flex items-start">
@@ -2652,7 +2701,7 @@ export default function BeatTheBet() {
 
               {/* Why I'm Quitting */}
               <button
-                onClick={() => setActiveTool('why-quitting')}
+                onClick={() => { trackToolUsage('why-quitting'); setActiveTool('why-quitting'); }}
                 className="w-full bg-white rounded-xl shadow-md p-5 border-l-4 border-red-500 hover:shadow-lg transition-all text-left"
               >
                 <div className="flex items-start">
@@ -2675,7 +2724,7 @@ export default function BeatTheBet() {
 
               {/* Skill Builder */}
               <button
-                onClick={() => setActiveTool('shop')}
+                onClick={() => { trackToolUsage('shop'); setActiveTool('shop'); }}
                 className="w-full bg-white rounded-xl shadow-md p-5 border-l-4 border-blue-500 hover:shadow-lg transition-all text-left"
               >
                 <div className="flex items-start">
@@ -2696,7 +2745,7 @@ export default function BeatTheBet() {
 
               {/* Community Chat */}
               <button
-                onClick={() => setActiveTool('chat')}
+                onClick={() => { trackToolUsage('chat'); setActiveTool('chat'); }}
                 className="w-full bg-white rounded-xl shadow-md p-5 border-l-4 border-green-500 hover:shadow-lg transition-all text-left"
               >
                 <div className="flex items-start">
@@ -2717,7 +2766,7 @@ export default function BeatTheBet() {
 
               {/* Activity Challenges */}
               <button
-                onClick={() => setActiveTool('activities')}
+                onClick={() => { trackToolUsage('activities'); setActiveTool('activities'); }}
                 className="w-full bg-white rounded-xl shadow-md p-5 border-l-4 border-orange-500 hover:shadow-lg transition-all text-left"
               >
                 <div className="flex items-start">
@@ -2738,7 +2787,7 @@ export default function BeatTheBet() {
 
               {/* Streak Analytics */}
               <button
-                onClick={() => setActiveTool('analytics')}
+                onClick={() => { trackToolUsage('analytics'); setActiveTool('analytics'); }}
                 className="w-full bg-white rounded-xl shadow-md p-5 border-l-4 border-indigo-500 hover:shadow-lg transition-all text-left"
               >
                 <div className="flex items-start">
@@ -5175,6 +5224,11 @@ export default function BeatTheBet() {
       const saved = localStorage.getItem('reportedMessageIds');
       return saved ? JSON.parse(saved) : [];
     });
+    // Keep a ref in sync so the polling interval (which only re-runs when
+    // chatRoom changes) always sees the latest reported IDs, not a stale
+    // snapshot from when the interval was first set up.
+    const reportedIdsRef = React.useRef(reportedIds);
+    React.useEffect(() => { reportedIdsRef.current = reportedIds; }, [reportedIds]);
     const messagesEndRef = React.useRef(null);
     const unsubscribeRef = React.useRef(null);
 
@@ -5458,7 +5512,7 @@ export default function BeatTheBet() {
           );
           if (res.ok) {
             const data = await res.json();
-            setMessages(data.filter(m => !m.flagged));
+            setMessages(data.filter(m => !m.flagged && !reportedIdsRef.current.includes(m.id)));
           }
         } catch (e) {
           console.warn('Failed to load messages:', e);
@@ -5484,7 +5538,7 @@ export default function BeatTheBet() {
           );
           if (res.ok) {
             const data = await res.json();
-            setMessages(data.filter(m => !m.flagged));
+            setMessages(data.filter(m => !m.flagged && !reportedIdsRef.current.includes(m.id)));
           }
         } catch (e) {}
       }, 4000);
@@ -5601,21 +5655,42 @@ export default function BeatTheBet() {
 
       try {
         const session = supabase.getSession();
-        const token = session ? session.access_token : SUPABASE_ANON_KEY;
+        if (!session) {
+          showError('Please log in to report messages.');
+          return;
+        }
+        const token = session.access_token;
 
         // Flag the message in Supabase
-        await fetch(
+        const res = await fetch(
           `${SUPABASE_URL}/rest/v1/messages?id=eq.${msg.id}`,
           {
             method: 'PATCH',
             headers: {
               'apikey': SUPABASE_ANON_KEY,
               'Authorization': `Bearer ${token}`,
-              'Content-Type': 'application/json'
+              'Content-Type': 'application/json',
+              'Prefer': 'return=representation'
             },
             body: JSON.stringify({ flagged: true })
           }
         );
+
+        if (!res.ok) {
+          const errBody = await res.json().catch(() => ({}));
+          console.error('Report failed:', res.status, errBody);
+          showError('Could not report message. Please try again.');
+          return;
+        }
+
+        const updatedRows = await res.json().catch(() => []);
+        if (!Array.isArray(updatedRows) || updatedRows.length === 0) {
+          // The request succeeded but no row was actually updated - most
+          // likely a row-level security restriction silently prevented it.
+          console.warn('Report PATCH returned 0 rows updated for message', msg.id);
+          showError('Could not report this message right now.');
+          return;
+        }
 
         const updated = [...reportedIds, msg.id];
         setReportedIds(updated);
@@ -8200,7 +8275,7 @@ export default function BeatTheBet() {
               </div>
             </button>
 
-            <button onClick={() => { setActiveTab('resources'); setActiveTool('why-quitting'); }} className="w-full bg-white rounded-xl shadow-md p-5 hover:shadow-lg transition-all text-left">
+            <button onClick={() => { trackToolUsage('why-quitting'); setActiveTab('resources'); setActiveTool('why-quitting'); }} className="w-full bg-white rounded-xl shadow-md p-5 hover:shadow-lg transition-all text-left">
               <div className="flex items-center justify-between">
                 <div>
                   <h3 className="font-bold text-gray-800 mb-1">Why I'm Quitting</h3>
@@ -8789,7 +8864,7 @@ Keep going! Every day counts. 💪
                   <div className="w-2 h-2 bg-green-600 rounded-full"></div>
                 </div>
                 <div className="flex-1">
-                  <p className="text-gray-700">Time-based progress that builds momentum</p>
+                  <p className="text-gray-700">We don't just block — we replace. Gambling chases a dopamine hit, so we point you toward real ones: movement, music, connection, achievement.</p>
                 </div>
               </li>
               <li className="flex items-start">
@@ -8798,6 +8873,22 @@ Keep going! Every day counts. 💪
                 </div>
                 <div className="flex-1">
                   <p className="text-gray-700">Support during urges, not just after setbacks</p>
+                </div>
+              </li>
+              <li className="flex items-start">
+                <div className="bg-green-100 rounded-full p-1 mr-3 mt-1">
+                  <div className="w-2 h-2 bg-green-600 rounded-full"></div>
+                </div>
+                <div className="flex-1">
+                  <p className="text-gray-700">Ongoing support, not a one-time fix — recovery is something we help you build daily, not something we assume is solved by a single block</p>
+                </div>
+              </li>
+              <li className="flex items-start">
+                <div className="bg-green-100 rounded-full p-1 mr-3 mt-1">
+                  <div className="w-2 h-2 bg-green-600 rounded-full"></div>
+                </div>
+                <div className="flex-1">
+                  <p className="text-gray-700">Time-based progress that builds momentum</p>
                 </div>
               </li>
               <li className="flex items-start">
