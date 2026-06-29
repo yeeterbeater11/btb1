@@ -13,8 +13,9 @@ const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
 // ============================================================
 const supabase = (() => {
   let _session = null;
+  let _refreshPromise = null;
 
-  const getSession = () => {
+  const getSessionRaw = () => {
     if (_session) return _session;
     const saved = localStorage.getItem('sb_session');
     if (saved) { _session = JSON.parse(saved); }
@@ -30,8 +31,68 @@ const supabase = (() => {
     }
   };
 
+  // Refresh the access token using the refresh_token before it expires.
+  // Supabase access tokens last 1 hour by default - without this, every
+  // session would silently die exactly 1 hour after login regardless of
+  // activity, breaking things like community chat mid-use.
+  const refreshSession = async () => {
+    const current = getSessionRaw();
+    if (!current || !current.refresh_token) return null;
+
+    // Avoid firing multiple simultaneous refresh requests if several
+    // parts of the app notice the token is stale at the same time.
+    if (_refreshPromise) return _refreshPromise;
+
+    _refreshPromise = (async () => {
+      try {
+        const res = await fetch(`${SUPABASE_URL}/auth/v1/token?grant_type=refresh_token`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'apikey': SUPABASE_ANON_KEY
+          },
+          body: JSON.stringify({ refresh_token: current.refresh_token })
+        });
+        if (!res.ok) {
+          // Refresh token itself is invalid/expired - nothing more we can do
+          saveSession(null);
+          return null;
+        }
+        const data = await res.json();
+        if (data.access_token) {
+          saveSession(data);
+          return data;
+        }
+        return null;
+      } catch (e) {
+        return null;
+      } finally {
+        _refreshPromise = null;
+      }
+    })();
+
+    return _refreshPromise;
+  };
+
+  // Public getSession: transparently refreshes the token if it's expired
+  // or about to expire (within 60 seconds), so callers never have to
+  // think about token lifetime themselves.
+  const getSession = () => getSessionRaw();
+
+  const getValidSession = async () => {
+    const current = getSessionRaw();
+    if (!current || !current.expires_at) return current;
+    const expiresAtMs = current.expires_at * 1000;
+    const isExpiringSoon = Date.now() > (expiresAtMs - 60000);
+    if (isExpiringSoon) {
+      const refreshed = await refreshSession();
+      return refreshed || current;
+    }
+    return current;
+  };
+
   const authHeaders = () => {
-    const session = getSession();
+    const session = getSessionRaw();
     return {
       'Content-Type': 'application/json',
       'apikey': SUPABASE_ANON_KEY,
@@ -43,6 +104,8 @@ const supabase = (() => {
 
   return {
     getSession,
+    getValidSession,
+    refreshSession,
 
     auth: {
       signUp: async ({ email, password }) => {
@@ -5517,7 +5580,7 @@ export default function BeatTheBet() {
       // Initial load
       const loadMessages = async () => {
         try {
-          const session = supabase.getSession();
+          const session = await supabase.getValidSession();
           const token = session ? session.access_token : SUPABASE_ANON_KEY;
           const res = await fetch(
             `${SUPABASE_URL}/rest/v1/messages?room=eq.${encodeURIComponent(chatRoom)}&order=created_at.asc&limit=50`,
@@ -5531,6 +5594,8 @@ export default function BeatTheBet() {
           if (res.ok) {
             const data = await res.json();
             setMessages(data.filter(m => !m.flagged && !reportedIdsRef.current.includes(m.id)));
+          } else if (res.status === 401) {
+            handleExpiredSession(res);
           }
         } catch (e) {
           console.warn('Failed to load messages:', e);
@@ -5543,7 +5608,7 @@ export default function BeatTheBet() {
       // Poll for new messages every 4 seconds
       const interval = setInterval(async () => {
         try {
-          const session = supabase.getSession();
+          const session = await supabase.getValidSession();
           const token = session ? session.access_token : SUPABASE_ANON_KEY;
           const res = await fetch(
             `${SUPABASE_URL}/rest/v1/messages?room=eq.${encodeURIComponent(chatRoom)}&order=created_at.asc&limit=50`,
@@ -5609,7 +5674,7 @@ export default function BeatTheBet() {
       setSending(true);
       setLastSentAt(now);
 
-      const session = supabase.getSession();
+      const session = await supabase.getValidSession();
 
       // If no session, user needs to re-login
       if (!session) {
@@ -5656,6 +5721,10 @@ export default function BeatTheBet() {
         });
 
         if (!res.ok) {
+          if (handleExpiredSession(res)) {
+            setMessages(prev => prev.filter(m => m.id !== optimisticMsg.id));
+            return;
+          }
           const errData = await res.json().catch(() => ({}));
           const errMsg = errData.message || errData.error || `Error ${res.status}`;
           setMessages(prev => prev.filter(m => m.id !== optimisticMsg.id));
@@ -5675,7 +5744,7 @@ export default function BeatTheBet() {
       if (reportedIds.includes(msg.id)) return;
 
       try {
-        const session = supabase.getSession();
+        const session = await supabase.getValidSession();
         if (!session) {
           showError('Please log in to report messages.');
           return;
