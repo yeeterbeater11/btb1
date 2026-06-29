@@ -1521,17 +1521,25 @@ export default function BeatTheBet() {
     if (!session) return;
     const uid = session.user.id;
 
-    // Build the upsert object - only include start_date if explicitly provided
-    // to prevent overwriting the correct DB value with a default localStorage value
+    // Only include fields that are either explicitly overridden or already
+    // have a real value in state. This prevents accidentally blanking out
+    // a field (like username) in Supabase when this function is called
+    // for an unrelated update (e.g. awarding points) from a stale closure.
     const upsertData = {
       id: uid,
-      username: overrides.username ?? username,
-      age_range: overrides.age_range ?? userAgeRange,
-      daily_gambling_spend: overrides.daily_gambling_spend ?? dailyGamblingSpend,
-      points: overrides.points ?? points,
-      level: overrides.level ?? level,
       updated_at: new Date().toISOString()
     };
+
+    const resolvedUsername = overrides.username ?? username;
+    if (resolvedUsername) upsertData.username = resolvedUsername;
+
+    const resolvedAgeRange = overrides.age_range ?? userAgeRange;
+    if (resolvedAgeRange) upsertData.age_range = resolvedAgeRange;
+
+    upsertData.daily_gambling_spend = overrides.daily_gambling_spend ?? dailyGamblingSpend;
+    upsertData.points = overrides.points ?? points;
+    upsertData.level = overrides.level ?? level;
+
     // Only write start_date if explicitly passed - never use default state value
     if (overrides.start_date !== undefined) {
       upsertData.start_date = overrides.start_date;
@@ -6310,64 +6318,61 @@ export default function BeatTheBet() {
       'commbank': {
         name: 'CommBank',
         steps: [
-          'Log into NetBank or CommBank app',
-          'Go to Settings → Manage my account',
-          'Select "Block gambling transactions"',
-          'Confirm and activate',
-          'Takes 24-48 hours to activate'
+          'Log in to the CommBank app',
+          'Tap Cards on the home screen',
+          'Swipe to select the eligible card you want to restrict',
+          'Tap Card Settings',
+          'Tap Gambling payments (this will take you to NetBank)',
+          'Tap Lock on your card'
         ],
-        link: 'https://www.commbank.com.au'
+        link: 'https://www.commbank.com.au/digital-banking/lock-block-limit-your-credit-card.html'
       },
       'westpac': {
         name: 'Westpac',
         steps: [
-          'Log into Westpac Online Banking',
-          'Go to Settings → Security settings',
-          'Select "Block gambling transactions"',
-          'Apply to all cards',
-          'Confirm'
+          'Sign in to the Westpac App or Online Banking',
+          'Navigate to the Card Services menu',
+          'Select Gambling Block',
+          'Choose the eligible credit or debit card(s) you wish to restrict and activate the block'
         ],
-        link: 'https://www.westpac.com.au'
+        link: 'https://www.westpac.com.au/personal-banking/credit-cards/manage/gambling-preference/'
       },
       'nab': {
         name: 'NAB',
         steps: [
-          'Log into NAB Internet Banking',
-          'Go to Cards → Card controls',
-          'Select "Block gambling merchants"',
-          'Apply to debit/credit cards',
-          'Save changes'
+          'Log into the NAB app on your mobile device',
+          'Tap Cards at the bottom of the screen',
+          'Select the debit or credit card you want to update',
+          'Tap Usage controls',
+          'Select Gambling restrictions',
+          'Toggle the setting to On (read the notice and tap Confirm)'
         ],
-        link: 'https://www.nab.com.au'
+        link: 'https://www.nab.com.au/help-support/extra-care-support/gambling-support'
       },
       'anz': {
         name: 'ANZ',
         steps: [
-          'Log into ANZ Internet Banking or app',
-          'Go to Cards → Manage card',
-          'Select "Transaction controls"',
-          'Block gambling category',
-          'Confirm'
+          'Open the ANZ App and select your eligible card',
+          'Tap Manage, then go to Manage Card',
+          'Select Card Controls',
+          'Toggle on the Gambling Block (may take up to 15 minutes to become fully active)'
         ],
         link: 'https://www.anz.com.au'
       },
       'ing': {
         name: 'ING',
         steps: [
-          'Contact ING customer service: 133 464',
-          'Request gambling block on all cards',
-          'They will activate it for you',
-          'Takes 1-2 business days'
+          'ING doesn\'t currently offer a self-service gambling block toggle in the app',
+          'Message ING through the app (look for Messages in the left-hand menu) or call 133 464 to ask about gambling support',
+          'Their care team can help tailor your account, such as restricting access to savings or other account changes'
         ],
-        link: 'https://www.ing.com.au'
+        link: 'https://www.ing.com.au/help-and-support/extra-care-and-support.html'
       },
       'macquarie': {
         name: 'Macquarie',
         steps: [
-          'Log into Macquarie Banking app',
-          'Go to Card settings',
-          'Enable "Block gambling transactions"',
-          'Apply to all linked cards'
+          'Macquarie credit cards automatically block most gambling transactions — there is nothing you need to set up',
+          'Coverage isn\'t complete, so it\'s still worth registering with BetStop for full protection'
         ],
         link: 'https://www.macquarie.com.au'
       }
