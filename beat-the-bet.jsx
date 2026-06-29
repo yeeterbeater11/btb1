@@ -5312,7 +5312,7 @@ export default function BeatTheBet() {
     React.useEffect(() => { reportedIdsRef.current = reportedIds; }, [reportedIds]);
     const messagesEndRef = React.useRef(null);
     const messagesContainerRef = React.useRef(null);
-    const prevMessageCountRef = React.useRef(0);
+    const latestMessageTimestampRef = React.useRef(0);
     const unsubscribeRef = React.useRef(null);
 
     // ============================================================
@@ -5640,8 +5640,11 @@ export default function BeatTheBet() {
     // changed), and only if the user is already near the bottom - so
     // scrolling up to read history doesn't keep getting yanked back down.
     React.useEffect(() => {
-      const isNewMessage = messages.length > prevMessageCountRef.current;
-      prevMessageCountRef.current = messages.length;
+      const latestTimestamp = messages.length > 0
+        ? Math.max(...messages.map(m => new Date(m.created_at).getTime()))
+        : 0;
+      const isNewMessage = latestTimestamp > latestMessageTimestampRef.current;
+      latestMessageTimestampRef.current = latestTimestamp;
 
       if (!isNewMessage) return;
 
@@ -5652,7 +5655,11 @@ export default function BeatTheBet() {
       const isNearBottom = distanceFromBottom < 150;
 
       if (isNearBottom) {
-        messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+        // Scroll the container itself directly, rather than using
+        // scrollIntoView on the end marker - scrollIntoView can scroll
+        // ancestor elements (like the page itself) too, which can look
+        // like being yanked to an unexpected position.
+        container.scrollTo({ top: container.scrollHeight, behavior: 'smooth' });
       }
     }, [messages]);
 
