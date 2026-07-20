@@ -420,16 +420,18 @@ function AdminPanel({ adminEmails, setAdminEmails, setActiveTool, showSuccess, s
     const safe = (promise) => promise.catch(() => ({ ok: false, data: [] }));
 
     try {
-      const [critRes, highRes, suppRes, usersRes, adminsRes] = await Promise.all([
-        safe(fetch(`${SUPABASE_URL}/rest/v1/messages?flagged=eq.true&moderation_level=eq.critical&reviewed=eq.false&order=created_at.desc&limit=50`, { headers: h }).then(async r => ({ ok: r.ok, data: await r.json() }))),
-        safe(fetch(`${SUPABASE_URL}/rest/v1/messages?flagged=eq.true&moderation_level=eq.high&reviewed=eq.false&order=created_at.desc&limit=50`, { headers: h }).then(async r => ({ ok: r.ok, data: await r.json() }))),
+      const [flaggedRes, suppRes, usersRes, adminsRes] = await Promise.all([
+        // Single query for all flagged+unreviewed messages, split client-side by level
+        // This catches messages reported before moderation_level was being set (null level)
+        safe(fetch(`${SUPABASE_URL}/rest/v1/messages?flagged=eq.true&reviewed=eq.false&order=created_at.desc&limit=100`, { headers: h }).then(async r => ({ ok: r.ok, data: await r.json() }))),
         safe(fetch(`${SUPABASE_URL}/rest/v1/messages?moderation_level=eq.support&reviewed=eq.false&order=created_at.desc&limit=50`, { headers: h }).then(async r => ({ ok: r.ok, data: await r.json() }))),
         safe(fetch(`${SUPABASE_URL}/rest/v1/profiles?select=id,username,created_at,points,level&order=created_at.desc&limit=100`, { headers: h }).then(async r => ({ ok: r.ok, data: await r.json() }))),
         safe(fetch(`${SUPABASE_URL}/rest/v1/admins?select=email,added_at&order=added_at.asc`, { headers: h }).then(async r => ({ ok: r.ok, data: await r.json() }))),
       ]);
 
-      const crit = critRes.ok && Array.isArray(critRes.data) ? critRes.data : [];
-      const high = highRes.ok && Array.isArray(highRes.data) ? highRes.data : [];
+      const allFlagged = flaggedRes.ok && Array.isArray(flaggedRes.data) ? flaggedRes.data : [];
+      const crit = allFlagged.filter(m => m.moderation_level === 'critical');
+      const high = allFlagged.filter(m => m.moderation_level !== 'critical'); // catches 'high', null, anything else
       const supp = suppRes.ok && Array.isArray(suppRes.data) ? suppRes.data : [];
       const users = usersRes.ok && Array.isArray(usersRes.data) ? usersRes.data : [];
       const admins = adminsRes.ok && Array.isArray(adminsRes.data) ? adminsRes.data.map(a => a.email) : localAdminEmails;
@@ -1334,6 +1336,15 @@ export default function BeatTheBet() {
 
     // Load profile from database
     const { data: profile } = await supabase.from('profiles').select('*').eq('id', loggedInUser.id);
+    if (!profile || profile.length === 0) {
+      // No profile row yet — create a minimal one so this user shows up in admin
+      await supabase.from('profiles').upsert({
+        id: loggedInUser.id,
+        points: 0,
+        level: 1,
+        updated_at: new Date().toISOString()
+      });
+    }
     if (profile && profile.length > 0) {
       const p = profile[0];
       const resolvedUsername = p.username || '';
