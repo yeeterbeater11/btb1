@@ -370,7 +370,14 @@ function AdminPanel({ adminEmails, setAdminEmails, setActiveTool, showSuccess, s
   const [loaded, setLoaded] = React.useState(false);
   const [loadError, setLoadError] = React.useState('');
   const [newAdminEmail, setNewAdminEmail] = React.useState('');
-  const [activeAdminTab, setActiveAdminTab] = React.useState('critical');
+  const [activeAdminTab, setActiveAdminTab] = React.useState(() => {
+    try { return sessionStorage.getItem('btb_admin_tab') || 'critical'; } catch (e) { return 'critical'; }
+  });
+
+  const setAdminTab = (tab) => {
+    try { sessionStorage.setItem('btb_admin_tab', tab); } catch (e) {}
+    setActiveAdminTab(tab);
+  };
   const isFetching = React.useRef(false);
 
   const CACHE_KEY = 'btb_admin_cache';
@@ -455,6 +462,15 @@ function AdminPanel({ adminEmails, setAdminEmails, setActiveTool, showSuccess, s
     }
   }, []);
 
+  const updateCache = (key, value) => {
+    try {
+      const cached = sessionStorage.getItem(CACHE_KEY);
+      const c = cached ? JSON.parse(cached) : {};
+      c[key] = value;
+      sessionStorage.setItem(CACHE_KEY, JSON.stringify(c));
+    } catch (e) {}
+  };
+
   const approveMessage = async (msg) => {
     const session = await supabase.getValidSession();
     if (!session) { showError('Session expired. Please log in again.'); return; }
@@ -468,9 +484,21 @@ function AdminPanel({ adminEmails, setAdminEmails, setActiveTool, showSuccess, s
       showError('Could not restore message: ' + (err.message || res.status));
       return;
     }
-    setCriticalQueue(p => p.filter(m => m.id !== msg.id));
-    setHighQueue(p => p.filter(m => m.id !== msg.id));
-    setSupportQueue(p => p.filter(m => m.id !== msg.id));
+    setCriticalQueue(p => {
+      const updated = p.filter(m => m.id !== msg.id);
+      updateCache('criticalQueue', updated);
+      return updated;
+    });
+    setHighQueue(p => {
+      const updated = p.filter(m => m.id !== msg.id);
+      updateCache('highQueue', updated);
+      return updated;
+    });
+    setSupportQueue(p => {
+      const updated = p.filter(m => m.id !== msg.id);
+      updateCache('supportQueue', updated);
+      return updated;
+    });
     showSuccess('Message restored.');
   };
 
@@ -486,9 +514,21 @@ function AdminPanel({ adminEmails, setAdminEmails, setActiveTool, showSuccess, s
       showError('Could not delete message: ' + (err.message || res.status));
       return;
     }
-    setCriticalQueue(p => p.filter(m => m.id !== msg.id));
-    setHighQueue(p => p.filter(m => m.id !== msg.id));
-    setSupportQueue(p => p.filter(m => m.id !== msg.id));
+    setCriticalQueue(p => {
+      const updated = p.filter(m => m.id !== msg.id);
+      updateCache('criticalQueue', updated);
+      return updated;
+    });
+    setHighQueue(p => {
+      const updated = p.filter(m => m.id !== msg.id);
+      updateCache('highQueue', updated);
+      return updated;
+    });
+    setSupportQueue(p => {
+      const updated = p.filter(m => m.id !== msg.id);
+      updateCache('supportQueue', updated);
+      return updated;
+    });
     showSuccess('Message deleted.');
   };
 
@@ -590,7 +630,7 @@ function AdminPanel({ adminEmails, setAdminEmails, setActiveTool, showSuccess, s
             { id: 'users', label: `Users (${userStats?.total ?? '—'})`, color: null },
             { id: 'admins', label: 'Admins', color: null },
           ].map(tab => (
-            <button key={tab.id} onClick={() => setActiveAdminTab(tab.id)}
+            <button key={tab.id} onClick={() => setAdminTab(tab.id)}
               className={`px-3 py-2 rounded-lg font-semibold text-xs whitespace-nowrap transition-colors ${activeAdminTab === tab.id ? (tab.color || 'bg-gray-900') + ' text-white' : 'bg-gray-100 text-gray-700 hover:bg-gray-200'}`}>
               {tab.label}
             </button>
@@ -5315,6 +5355,7 @@ export default function BeatTheBet() {
     const reportedIdsRef = React.useRef(reportedIds);
     React.useEffect(() => { reportedIdsRef.current = reportedIds; }, [reportedIds]);
     const messagesEndRef = React.useRef(null);
+    const chatInputRef = React.useRef(null);
     const messagesContainerRef = React.useRef(null);
     const latestMessageTimestampRef = React.useRef(0);
     const unsubscribeRef = React.useRef(null);
@@ -5607,6 +5648,11 @@ export default function BeatTheBet() {
           console.warn('Failed to load messages:', e);
         }
         setLoadingMessages(false);
+        // Scroll to bottom on initial load so newest messages are visible
+        requestAnimationFrame(() => {
+          const container = messagesContainerRef.current;
+          if (container) container.scrollTop = container.scrollHeight;
+        });
       };
 
       loadMessages();
@@ -5678,13 +5724,7 @@ export default function BeatTheBet() {
     const sendMessage = async () => {
       if (!newMessage.trim() || !username || sending) return;
 
-      // Rate limit: 1 message per 3 seconds
       const now = Date.now();
-      if (now - lastSentAt < 3000) {
-        showError('Please wait a moment before sending another message.');
-        return;
-      }
-
       // Classify message
       const classification = classifyMessage(newMessage.trim(), chatRoom);
 
@@ -5724,6 +5764,7 @@ export default function BeatTheBet() {
 
       setMessages(prev => [...prev, optimisticMsg]);
       setNewMessage('');
+      setTimeout(() => chatInputRef.current?.focus(), 0);
 
       try {
         const token = session ? session.access_token : SUPABASE_ANON_KEY;
@@ -6055,6 +6096,7 @@ export default function BeatTheBet() {
           <div className="max-w-2xl mx-auto">
             <div className="flex items-center gap-2">
               <input
+                ref={chatInputRef}
                 type="text"
                 value={newMessage}
                 onChange={(e) => setNewMessage(e.target.value)}
