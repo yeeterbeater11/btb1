@@ -5844,7 +5844,7 @@ export default function BeatTheBet() {
               'Content-Type': 'application/json',
               'Prefer': 'return=representation'
             },
-            body: JSON.stringify({ flagged: true, moderation_level: 'high', moderation_reason: 'Reported by a user.' })
+            body: JSON.stringify({ flagged: true, moderation_level: 'high', moderation_reason: 'Reported by a user.', reviewed: false })
           }
         );
 
