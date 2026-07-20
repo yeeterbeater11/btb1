@@ -456,13 +456,18 @@ function AdminPanel({ adminEmails, setAdminEmails, setActiveTool, showSuccess, s
   }, []);
 
   const approveMessage = async (msg) => {
-    const session = supabase.getSession();
-    if (!session) return;
-    await fetch(`${SUPABASE_URL}/rest/v1/messages?id=eq.${msg.id}`, {
+    const session = await supabase.getValidSession();
+    if (!session) { showError('Session expired. Please log in again.'); return; }
+    const res = await fetch(`${SUPABASE_URL}/rest/v1/messages?id=eq.${msg.id}`, {
       method: 'PATCH',
-      headers: { 'apikey': SUPABASE_ANON_KEY, 'Authorization': `Bearer ${session.access_token}`, 'Content-Type': 'application/json' },
+      headers: { 'apikey': SUPABASE_ANON_KEY, 'Authorization': `Bearer ${session.access_token}`, 'Content-Type': 'application/json', 'Prefer': 'return=representation' },
       body: JSON.stringify({ flagged: false, reviewed: true })
     });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      showError('Could not restore message: ' + (err.message || res.status));
+      return;
+    }
     setCriticalQueue(p => p.filter(m => m.id !== msg.id));
     setHighQueue(p => p.filter(m => m.id !== msg.id));
     setSupportQueue(p => p.filter(m => m.id !== msg.id));
@@ -470,12 +475,17 @@ function AdminPanel({ adminEmails, setAdminEmails, setActiveTool, showSuccess, s
   };
 
   const deleteMessage = async (msg) => {
-    const session = supabase.getSession();
-    if (!session) return;
-    await fetch(`${SUPABASE_URL}/rest/v1/messages?id=eq.${msg.id}`, {
+    const session = await supabase.getValidSession();
+    if (!session) { showError('Session expired. Please log in again.'); return; }
+    const res = await fetch(`${SUPABASE_URL}/rest/v1/messages?id=eq.${msg.id}`, {
       method: 'DELETE',
-      headers: { 'apikey': SUPABASE_ANON_KEY, 'Authorization': `Bearer ${session.access_token}` }
+      headers: { 'apikey': SUPABASE_ANON_KEY, 'Authorization': `Bearer ${session.access_token}`, 'Prefer': 'return=representation' }
     });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      showError('Could not delete message: ' + (err.message || res.status));
+      return;
+    }
     setCriticalQueue(p => p.filter(m => m.id !== msg.id));
     setHighQueue(p => p.filter(m => m.id !== msg.id));
     setSupportQueue(p => p.filter(m => m.id !== msg.id));
@@ -1435,12 +1445,6 @@ export default function BeatTheBet() {
 
     ]).then(() => {
       console.log('Data restore complete');
-      // Force a full reload so every piece of React state (music likes,
-      // budget, journal, badges, etc.) re-initializes fresh from the
-      // newly-restored localStorage. Without this, state from a previous
-      // account can keep showing even after localStorage is corrected,
-      // because useState's lazy initializer only runs once on first mount.
-      window.location.reload();
     });
 
     // Check admin status after login
