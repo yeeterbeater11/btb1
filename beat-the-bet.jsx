@@ -5869,6 +5869,9 @@ export default function BeatTheBet() {
         setReportedIds(updated);
         localStorage.setItem('reportedMessageIds', JSON.stringify(updated));
         removeMessageKeepingScrollPosition(msg.id);
+        // Invalidate the admin panel cache so it re-fetches next time it opens,
+        // picking up this newly reported message in the High queue.
+        try { sessionStorage.removeItem('btb_admin_cache'); } catch (e) {}
         showSuccess('Message reported and removed.');
       } catch (e) {
         showError('Could not report message.');
