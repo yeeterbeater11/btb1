@@ -494,6 +494,13 @@ function AdminPanel({ adminEmails, setAdminEmails, setActiveTool, showSuccess, s
       return;
     }
     removeFromAllQueues(msg.id);
+    // Remove from local reportedMessageIds so it reappears in chat
+    try {
+      const saved = localStorage.getItem('reportedMessageIds');
+      const ids = saved ? JSON.parse(saved) : [];
+      const updated = ids.filter(id => id !== msg.id);
+      localStorage.setItem('reportedMessageIds', JSON.stringify(updated));
+    } catch (e) {}
     showSuccess('Message restored.');
   };
 
@@ -5630,7 +5637,8 @@ export default function BeatTheBet() {
           );
           if (res.ok) {
             const data = await res.json();
-            setMessages(data.filter(m => !m.flagged && !reportedIdsRef.current.includes(m.id)));
+            const freshReportedIds = (() => { try { const s = localStorage.getItem('reportedMessageIds'); return s ? JSON.parse(s) : []; } catch(e) { return reportedIdsRef.current; } })();
+            setMessages(data.filter(m => !m.flagged && !freshReportedIds.includes(m.id)));
           } else if (res.status === 401) {
             handleExpiredSession(res);
           }
@@ -5663,7 +5671,8 @@ export default function BeatTheBet() {
           );
           if (res.ok) {
             const data = await res.json();
-            setMessages(data.filter(m => !m.flagged && !reportedIdsRef.current.includes(m.id)));
+            const freshReportedIds = (() => { try { const s = localStorage.getItem('reportedMessageIds'); return s ? JSON.parse(s) : []; } catch(e) { return reportedIdsRef.current; } })();
+            setMessages(data.filter(m => !m.flagged && !freshReportedIds.includes(m.id)));
           } else if (res.status === 401) {
             clearInterval(interval);
             handleExpiredSession(res);
