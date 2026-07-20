@@ -464,11 +464,18 @@ function AdminPanel({ adminEmails, setAdminEmails, setActiveTool, showSuccess, s
     }
   }, []);
 
-  const updateCache = (key, value) => {
+  const removeFromAllQueues = (msgId) => {
+    let newCrit, newHigh, newSupp;
+    setCriticalQueue(p => { newCrit = p.filter(m => m.id !== msgId); return newCrit; });
+    setHighQueue(p => { newHigh = p.filter(m => m.id !== msgId); return newHigh; });
+    setSupportQueue(p => { newSupp = p.filter(m => m.id !== msgId); return newSupp; });
+    // Update all three in a single cache write to avoid sequential read-write races
     try {
       const cached = sessionStorage.getItem(CACHE_KEY);
       const c = cached ? JSON.parse(cached) : {};
-      c[key] = value;
+      if (newCrit !== undefined) c.criticalQueue = newCrit;
+      if (newHigh !== undefined) c.highQueue = newHigh;
+      if (newSupp !== undefined) c.supportQueue = newSupp;
       sessionStorage.setItem(CACHE_KEY, JSON.stringify(c));
     } catch (e) {}
   };
@@ -486,21 +493,7 @@ function AdminPanel({ adminEmails, setAdminEmails, setActiveTool, showSuccess, s
       showError('Could not restore message: ' + (err.message || res.status));
       return;
     }
-    setCriticalQueue(p => {
-      const updated = p.filter(m => m.id !== msg.id);
-      updateCache('criticalQueue', updated);
-      return updated;
-    });
-    setHighQueue(p => {
-      const updated = p.filter(m => m.id !== msg.id);
-      updateCache('highQueue', updated);
-      return updated;
-    });
-    setSupportQueue(p => {
-      const updated = p.filter(m => m.id !== msg.id);
-      updateCache('supportQueue', updated);
-      return updated;
-    });
+    removeFromAllQueues(msg.id);
     showSuccess('Message restored.');
   };
 
@@ -516,21 +509,7 @@ function AdminPanel({ adminEmails, setAdminEmails, setActiveTool, showSuccess, s
       showError('Could not delete message: ' + (err.message || res.status));
       return;
     }
-    setCriticalQueue(p => {
-      const updated = p.filter(m => m.id !== msg.id);
-      updateCache('criticalQueue', updated);
-      return updated;
-    });
-    setHighQueue(p => {
-      const updated = p.filter(m => m.id !== msg.id);
-      updateCache('highQueue', updated);
-      return updated;
-    });
-    setSupportQueue(p => {
-      const updated = p.filter(m => m.id !== msg.id);
-      updateCache('supportQueue', updated);
-      return updated;
-    });
+    removeFromAllQueues(msg.id);
     showSuccess('Message deleted.');
   };
 
