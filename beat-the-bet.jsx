@@ -1335,11 +1335,17 @@ export default function BeatTheBet() {
       const p = profile[0];
       const resolvedUsername = p.username || '';
       user.username = resolvedUsername;
-      user.profileComplete = !!(resolvedUsername && resolvedUsername.length >= 2);
+      user.profileComplete = !!(resolvedUsername && resolvedUsername.length >= 2) ||
+        !!(p.start_date) ||
+        !!(p.points && p.points > 0);
       // Also restore username to global state
       if (resolvedUsername) {
         setUsername(resolvedUsername);
         localStorage.setItem('username', resolvedUsername);
+        // Also restore chatUsername so the username setup prompt
+        // doesn't reappear on every login for existing users
+        localStorage.setItem('chatUsername', resolvedUsername);
+        setHasSetUsername(true);
       }
 
       // Restore profile data to state
@@ -2035,7 +2041,7 @@ export default function BeatTheBet() {
         { id: 'my-budget', name: 'My Budget', icon: '💰', color: 'green' },
         { id: 'analytics', name: 'My Progress', icon: '📊', color: 'indigo' },
         { id: 'music-discovery', name: 'Music Discovery', icon: '🎵', color: 'purple' },
-        { id: 'activities', name: 'Challenges', icon: '🎯', color: 'orange' },
+        { id: 'activities', name: 'Daily Challenges', icon: '🎯', color: 'orange' },
         { id: 'chat', name: 'Community', icon: '💬', color: 'pink' },
         { id: 'why-quitting', name: 'Why I\'m Quitting', icon: '♥', color: 'red' },
         { id: 'shop', name: 'Skill Builder', icon: '🛠️', color: 'teal' }
@@ -2644,7 +2650,7 @@ export default function BeatTheBet() {
     if (activeTool === 'my-budget') return <MyBudgetPage />;
     if (activeTool === 'mindfulness') return showJournalCalendar ? <JournalCalendarView /> : <MindfulnessPage />;
     if (activeTool === 'shop') return <ShopPage />;
-    if (activeTool === 'activities') return <ActivityChallengesPage />;
+    if (activeTool === 'activities') return <DailyChallengesPage />;
     if (activeTool === 'chat') return <CommunityChatPage />;
     if (activeTool === 'analytics') return <StreakAnalyticsPage />;
     if (activeTool === 'music-discovery') return <MusicDiscoveryPage />;
@@ -2886,7 +2892,7 @@ export default function BeatTheBet() {
                 </div>
               </button>
 
-              {/* Activity Challenges */}
+              {/* Daily Challenges */}
               <button
                 onClick={() => { trackToolUsage('activities'); setActiveTool('activities'); }}
                 className="w-full bg-white rounded-xl shadow-md p-5 border-l-4 border-orange-500 hover:shadow-lg transition-all text-left"
@@ -2897,11 +2903,11 @@ export default function BeatTheBet() {
                   </div>
                   <div className="flex-1">
                     <div className="flex items-center justify-between mb-1">
-                      <h3 className="font-bold text-gray-800">Activity Challenges</h3>
+                      <h3 className="font-bold text-gray-800">Daily Challenges</h3>
                       <ChevronRight className="w-5 h-5 text-gray-400" />
                     </div>
                     <p className="text-gray-600 text-sm leading-relaxed">
-                      Physical movement tracker and challenges
+                      Personalised daily activities to rebuild healthy reward pathways
                     </p>
                   </div>
                 </div>
@@ -3359,301 +3365,876 @@ export default function BeatTheBet() {
     );
   };
 
-  const ActivityChallengesPage = () => {
-    const [showAddActivity, setShowAddActivity] = useState(false);
-    const [newActivity, setNewActivity] = useState({ type: '', duration: '', distance: '' });
-    
-    const activityTypes = [
-      { id: 'walk', name: 'Walk', emoji: '🚶', unit: 'minutes' },
-      { id: 'run', name: 'Run', emoji: '🏃', unit: 'minutes' },
-      { id: 'bike', name: 'Bike Ride', emoji: '🚴', unit: 'minutes' },
-      { id: 'yoga', name: 'Yoga/Stretch', emoji: '🧘', unit: 'minutes' },
-      { id: 'gym', name: 'Gym Workout', emoji: '🏋️', unit: 'minutes' },
-      { id: 'swim', name: 'Swimming', emoji: '🏊', unit: 'minutes' },
-      { id: 'dance', name: 'Dancing', emoji: '💃', unit: 'minutes' },
-      { id: 'sports', name: 'Sports', emoji: '⚽', unit: 'minutes' },
+  // ============================================================
+  // DAILY CHALLENGES SYSTEM
+  // ============================================================
+  const DailyChallengesPage = () => {
+    const SUPABASE_URL_LOCAL = 'https://emrpkubjspydnbrittuy.supabase.co';
+
+    // State
+    const [loading, setLoading] = React.useState(true);
+    const [preferences, setPreferences] = React.useState(null);
+    const [onboardingStep, setOnboardingStep] = React.useState(0);
+    const [showSettings, setShowSettings] = React.useState(false);
+    const [dailySet, setDailySet] = React.useState(null);
+    const [challenges, setChallenges] = React.useState([]);
+    const [history, setHistory] = React.useState([]);
+    const [feedbackChallenge, setFeedbackChallenge] = React.useState(null);
+    const [pillarStats, setPillarStats] = React.useState({});
+
+    // Onboarding draft state
+    const [draftPrefs, setDraftPrefs] = React.useState({
+      interest_tags: [],
+      preferred_categories: [],
+      excluded_categories: [],
+      preferred_time_ranges: ['Under 15 mins', '15–30 mins'],
+      preferred_energy_levels: ['Low', 'Moderate'],
+      preferred_social_type: 'Either',
+      cost_preference: 'Free or low cost',
+      location_preference: 'Either',
+      physical_exclusions: [],
+      allow_variety_suggestions: true
+    });
+
+    const allCategories = [
+      'Physical / Movement', 'Social / Connection', 'Creative',
+      'Learning / Achievement', 'Nature / Outdoors', 'Mindfulness / Reflection',
+      'Music', 'Financial Wellbeing', 'Challenge / Novelty'
     ];
 
-    const dailyChallenges = [
-      { id: 'steps', goal: dailyStepGoal, current: todaySteps, title: `${dailyStepGoal.toLocaleString()} Steps`, emoji: '👟', unit: 'steps' },
-      { id: 'movement', goal: 30, current: getTodayActivityMinutes(), title: '30 Minutes Active', emoji: '🔥', unit: 'min' },
-      { id: 'fresh_air', goal: 1, current: getTodayOutdoorActivities(), title: 'Get Outside', emoji: '🌳', unit: 'times' },
+    const allInterests = [
+      'Walking and running', 'Gym and home workouts', 'Team and ball sports',
+      'Cycling', 'Swimming', 'Cooking and baking', 'Music discovery',
+      'Playing an instrument', 'Reading and learning', 'Art and drawing',
+      'Photography', 'Writing', 'DIY and building', 'Gardening',
+      'Nature and outdoors', 'Social activities', 'Volunteering and helping others',
+      'Financial wellbeing'
     ];
 
-    function getTodayActivityMinutes() {
-      const today = new Date().toDateString();
-      return activityLog
-        .filter(a => new Date(a.date).toDateString() === today)
-        .reduce((sum, a) => sum + parseInt(a.duration || 0), 0);
-    }
+    const allPillars = [
+      'Movement', 'Connection', 'Creativity', 'Learning', 'Nature',
+      'Mindfulness', 'Music', 'Financial Wellbeing', 'Novelty', 'Achievement'
+    ];
 
-    function getTodayOutdoorActivities() {
-      const today = new Date().toDateString();
-      const outdoorTypes = ['walk', 'run', 'bike', 'sports'];
-      return activityLog
-        .filter(a => new Date(a.date).toDateString() === today && outdoorTypes.includes(a.type))
-        .length > 0 ? 1 : 0;
-    }
+    const physicalExclusions = [
+      'Running', 'High-impact exercise', 'Heavy lifting', 'Swimming',
+      'Cycling', 'Long walks', 'Cold exposure'
+    ];
 
-    function getWeeklyStats() {
-      const weekAgo = new Date();
-      weekAgo.setDate(weekAgo.getDate() - 7);
-      
-      const weekActivities = activityLog.filter(a => new Date(a.date) >= weekAgo);
-      const totalMinutes = weekActivities.reduce((sum, a) => sum + parseInt(a.duration || 0), 0);
-      const daysActive = new Set(weekActivities.map(a => new Date(a.date).toDateString())).size;
-      
-      return { totalMinutes, daysActive };
-    }
+    const timeOptions = ['Under 15 mins', '15–30 mins', '30–60 mins', '1+ hour', 'Varies'];
+    const energyOptions = ['Low energy', 'Moderate', 'Challenging', 'Varies'];
 
-    const addActivity = () => {
-      if (newActivity.type && newActivity.duration) {
-        const activity = {
-          id: Date.now(),
-          type: newActivity.type,
-          duration: parseInt(newActivity.duration),
-          distance: newActivity.distance,
-          date: new Date().toISOString(),
-        };
-        
-        const updated = [...activityLog, activity];
-        setActivityLog(updated);
-        localStorage.setItem('activityLog', JSON.stringify(updated));
+    // ============================================================
+    // Data loading
+    // ============================================================
+    React.useEffect(() => {
+      loadData();
+    }, []);
 
-        // Sync to Supabase
-        const session = supabase.getSession();
-        if (session) {
-          supabase.from('activity_log').insert({
-            user_id: session.user.id,
-            type: activity.type,
-            duration_minutes: activity.duration,
-            distance: activity.distance || null,
-            logged_at: activity.date
-          }).catch(() => {});
+    const getHeaders = async () => {
+      const session = await supabase.getValidSession();
+      return {
+        'apikey': SUPABASE_ANON_KEY,
+        'Authorization': 'Bearer ' + (session ? session.access_token : SUPABASE_ANON_KEY),
+        'Content-Type': 'application/json',
+        'Prefer': 'return=representation'
+      };
+    };
+
+    const loadData = async () => {
+      setLoading(true);
+      try {
+        const headers = await getHeaders();
+        const session = await supabase.getValidSession();
+        if (!session) { setLoading(false); return; }
+        const uid = session.user.id;
+
+        // Fetch challenges library, preferences, today's set, and history in parallel
+        const today = new Date().toISOString().split('T')[0];
+        const [challRes, prefRes, setRes, histRes] = await Promise.all([
+          fetch(`${SUPABASE_URL_LOCAL}/rest/v1/daily_challenges?active=eq.true&order=challenge_key.asc`, { headers }),
+          fetch(`${SUPABASE_URL_LOCAL}/rest/v1/challenge_preferences?user_id=eq.${uid}`, { headers }),
+          fetch(`${SUPABASE_URL_LOCAL}/rest/v1/daily_challenge_sets?user_id=eq.${uid}&challenge_date=eq.${today}`, { headers }),
+          fetch(`${SUPABASE_URL_LOCAL}/rest/v1/user_challenge_history?user_id=eq.${uid}&order=challenge_date.desc&limit=100`, { headers })
+        ]);
+
+        const challData = challRes.ok ? await challRes.json() : [];
+        const prefData = prefRes.ok ? await prefRes.json() : [];
+        const setData = setRes.ok ? await setRes.json() : [];
+        const histData = histRes.ok ? await histRes.json() : [];
+
+        setChallenges(challData);
+        setHistory(histData);
+
+        if (prefData.length > 0) {
+          setPreferences(prefData[0]);
+          setDraftPrefs({ ...draftPrefs, ...prefData[0] });
         }
 
-        addPoints(10, `Logged ${activityTypes.find(t => t.id === newActivity.type)?.name}`);
-        setNewActivity({ type: '', duration: '', distance: '' });
-        setShowAddActivity(false);
+        // Calculate pillar stats from history
+        const stats = {};
+        histData.filter(h => h.status === 'completed').forEach(h => {
+          const chall = challData.find(c => c.id === h.challenge_id);
+          if (chall) {
+            stats[chall.primary_pillar] = (stats[chall.primary_pillar] || 0) + 1;
+            (chall.secondary_pillars || []).forEach(p => {
+              stats[p] = (stats[p] || 0) + 0.5;
+            });
+          }
+        });
+        setPillarStats(stats);
+
+        // If we have a set for today, load it; otherwise generate one
+        if (setData.length > 0 && prefData.length > 0 && prefData[0].onboarding_completed) {
+          setDailySet(setData[0]);
+        } else if (prefData.length > 0 && prefData[0].onboarding_completed && challData.length > 0) {
+          await generateDailySet(challData, prefData[0], histData);
+        }
+      } catch (e) {
+        console.error('Failed to load challenges:', e);
+      }
+      setLoading(false);
+    };
+
+    // ============================================================
+    // Challenge Selection Engine
+    // ============================================================
+    const isEligible = (challenge, prefs, recentIds, todayIds) => {
+      if (!challenge.active) return false;
+      if (prefs.excluded_categories?.includes(challenge.category)) return false;
+      if (challenge.requires_interest_match && !(challenge.required_interest_tags || []).some(t => (prefs.interest_tags || []).includes(t))) return false;
+      if ((challenge.physical_exclusion_tags || []).some(t => (prefs.physical_exclusions || []).includes(t))) return false;
+      if (recentIds.includes(challenge.id)) return false;
+      if (todayIds.includes(challenge.id)) return false;
+
+      // Cost filter
+      if (prefs.cost_preference === 'Free only' && challenge.cost_level !== 'Free') return false;
+      if (prefs.cost_preference === 'Free or low cost' && challenge.cost_level === 'Paid') return false;
+
+      // Location filter
+      if (prefs.location_preference === 'Indoors' && challenge.location_type === 'Outdoor') return false;
+      if (prefs.location_preference === 'Outdoors' && challenge.location_type === 'Indoor') return false;
+
+      // Social filter
+      if (prefs.preferred_social_type === 'Solo' && challenge.social_type === 'Social') return false;
+      if (prefs.preferred_social_type === 'Social' && challenge.social_type === 'Solo') return false;
+
+      return true;
+    };
+
+    const getRecentChallengeIds = (hist, challList) => {
+      const now = new Date();
+      return hist
+        .filter(h => {
+          const chall = challList.find(c => c.id === h.challenge_id);
+          if (!chall) return false;
+          const daysSince = Math.floor((now - new Date(h.challenge_date)) / 86400000);
+          return daysSince < (chall.repeat_cooldown_days || 3);
+        })
+        .map(h => h.challenge_id);
+    };
+
+    const scoreForQuickWin = (c) => {
+      let score = 0;
+      if (c.universal_eligibility) score += 30;
+      if (c.difficulty === 'Easy') score += 25;
+      if (c.energy_required === 'Low') score += 20;
+      if (c.estimated_time === 'Under 15 mins') score += 15;
+      if (c.estimated_time === '15–30 mins') score += 8;
+      if (c.cost_level === 'Free') score += 10;
+      score += Math.random() * 15; // add randomness
+      return score;
+    };
+
+    const scoreForPersonalMatch = (c, prefs, hist) => {
+      let score = 0;
+      if ((prefs.preferred_categories || []).includes(c.category)) score += 25;
+      if ((c.interest_tags || []).some(t => (prefs.interest_tags || []).includes(t))) score += 20;
+      if ((c.required_interest_tags || []).some(t => (prefs.interest_tags || []).includes(t))) score += 15;
+
+      // Favour challenges with positive feedback history
+      const pastFeedback = hist.filter(h => h.challenge_id === c.id && h.feedback_rating);
+      pastFeedback.forEach(f => {
+        if (f.feedback_rating === 'enjoyed') score += 10;
+        if (f.feedback_rating === 'okay') score += 3;
+        if (f.feedback_rating === 'not_for_me') score -= 15;
+      });
+
+      // Time preference match
+      if ((prefs.preferred_time_ranges || []).includes(c.estimated_time)) score += 8;
+
+      score += Math.random() * 12;
+      return score;
+    };
+
+    const scoreForSomethingDifferent = (c, prefs, stats) => {
+      let score = 0;
+      // Favour underused pillars
+      const pillarUsage = stats[c.primary_pillar] || 0;
+      score += Math.max(0, 20 - pillarUsage * 3);
+
+      // Favour categories the user doesn't usually pick
+      if (!(prefs.preferred_categories || []).includes(c.category)) score += 10;
+
+      if (c.universal_eligibility) score += 5;
+      score += Math.random() * 15;
+      return score;
+    };
+
+    const generateDailySet = async (challList, prefs, hist) => {
+      const recentIds = getRecentChallengeIds(hist, challList);
+      const todayIds = [];
+
+      const eligible = challList.filter(c => isEligible(c, prefs, recentIds, todayIds));
+      if (eligible.length < 3) {
+        // Not enough challenges — show what we have
+        const fallback = eligible.slice(0, 3);
+        const newSet = {
+          quick_win_challenge_id: fallback[0]?.id || null,
+          personal_match_challenge_id: fallback[1]?.id || null,
+          different_challenge_id: fallback[2]?.id || null
+        };
+        await saveDailySet(newSet);
+        return;
+      }
+
+      // Quick Win
+      const quickWinScored = eligible.map(c => ({ ...c, score: scoreForQuickWin(c) })).sort((a, b) => b.score - a.score);
+      const quickWin = quickWinScored[0];
+      todayIds.push(quickWin.id);
+
+      // Personal Match
+      const personalEligible = eligible.filter(c => !todayIds.includes(c.id));
+      const personalScored = personalEligible.map(c => ({ ...c, score: scoreForPersonalMatch(c, prefs, hist) })).sort((a, b) => b.score - a.score);
+      const personalMatch = personalScored[0];
+      todayIds.push(personalMatch.id);
+
+      // Something Different
+      const differentEligible = eligible.filter(c => !todayIds.includes(c.id));
+      const differentScored = differentEligible.map(c => ({ ...c, score: scoreForSomethingDifferent(c, prefs, pillarStats) })).sort((a, b) => b.score - a.score);
+      const somethingDifferent = differentScored[0];
+
+      const newSet = {
+        quick_win_challenge_id: quickWin.id,
+        personal_match_challenge_id: personalMatch.id,
+        different_challenge_id: somethingDifferent.id
+      };
+      await saveDailySet(newSet);
+    };
+
+    const saveDailySet = async (setData) => {
+      const headers = await getHeaders();
+      const session = await supabase.getValidSession();
+      if (!session) return;
+      const today = new Date().toISOString().split('T')[0];
+
+      const row = {
+        user_id: session.user.id,
+        challenge_date: today,
+        ...setData
+      };
+
+      const res = await fetch(`${SUPABASE_URL_LOCAL}/rest/v1/daily_challenge_sets`, {
+        method: 'POST',
+        headers: { ...headers, 'Prefer': 'resolution=merge-duplicates,return=representation' },
+        body: JSON.stringify(row)
+      });
+
+      if (res.ok) {
+        const data = await res.json();
+        setDailySet(data[0] || row);
       }
     };
 
-    const deleteActivity = (id) => {
-      const updated = activityLog.filter(a => a.id !== id);
-      setActivityLog(updated);
-      localStorage.setItem('activityLog', JSON.stringify(updated));
+    // ============================================================
+    // Onboarding
+    // ============================================================
+    const savePreferences = async (completed = false) => {
+      const headers = await getHeaders();
+      const session = await supabase.getValidSession();
+      if (!session) return;
+
+      const row = {
+        user_id: session.user.id,
+        ...draftPrefs,
+        onboarding_completed: completed,
+        updated_at: new Date().toISOString()
+      };
+
+      const res = await fetch(`${SUPABASE_URL_LOCAL}/rest/v1/challenge_preferences`, {
+        method: 'POST',
+        headers: { ...headers, 'Prefer': 'resolution=merge-duplicates,return=representation' },
+        body: JSON.stringify(row)
+      });
+
+      if (res.ok) {
+        const data = await res.json();
+        const saved = data[0] || row;
+        setPreferences(saved);
+        if (completed) {
+          await generateDailySet(challenges, saved, history);
+        }
+      }
     };
 
-    const weeklyStats = getWeeklyStats();
-    const todayActivities = activityLog.filter(a => 
-      new Date(a.date).toDateString() === new Date().toDateString()
+    const toggleArrayItem = (arr, item) => {
+      return arr.includes(item) ? arr.filter(i => i !== item) : [...arr, item];
+    };
+
+    const MultiSelect = ({ options, selected, onChange, columns = 2 }) => (
+      <div className={`grid grid-cols-${columns} gap-2`}>
+        {options.map(opt => (
+          <button
+            key={opt}
+            onClick={() => onChange(toggleArrayItem(selected, opt))}
+            className={`px-3 py-2.5 rounded-lg text-sm font-medium text-left transition-colors ${
+              selected.includes(opt)
+                ? 'bg-green-500 text-white'
+                : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
+            }`}
+          >
+            {opt}
+          </button>
+        ))}
+      </div>
     );
+
+    const SingleSelect = ({ options, selected, onChange }) => (
+      <div className="grid grid-cols-1 gap-2">
+        {options.map(opt => (
+          <button
+            key={opt}
+            onClick={() => onChange(opt)}
+            className={`px-3 py-2.5 rounded-lg text-sm font-medium text-left transition-colors ${
+              selected === opt
+                ? 'bg-green-500 text-white'
+                : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
+            }`}
+          >
+            {opt}
+          </button>
+        ))}
+      </div>
+    );
+
+    // ============================================================
+    // Challenge Actions
+    // ============================================================
+    const markComplete = async (challengeId, slotType) => {
+      const headers = await getHeaders();
+      const session = await supabase.getValidSession();
+      if (!session) return;
+      const today = new Date().toISOString().split('T')[0];
+
+      await fetch(`${SUPABASE_URL_LOCAL}/rest/v1/user_challenge_history`, {
+        method: 'POST',
+        headers: { ...headers, 'Prefer': 'resolution=merge-duplicates,return=representation' },
+        body: JSON.stringify({
+          user_id: session.user.id,
+          challenge_id: challengeId,
+          challenge_date: today,
+          slot_type: slotType,
+          status: 'completed',
+          completed_at: new Date().toISOString(),
+          shown_at: new Date().toISOString()
+        })
+      });
+
+      setHistory(prev => [...prev, { challenge_id: challengeId, challenge_date: today, status: 'completed', slot_type: slotType }]);
+
+      // Update pillar stats
+      const chall = challenges.find(c => c.id === challengeId);
+      if (chall) {
+        setPillarStats(prev => {
+          const updated = { ...prev };
+          updated[chall.primary_pillar] = (updated[chall.primary_pillar] || 0) + 1;
+          (chall.secondary_pillars || []).forEach(p => {
+            updated[p] = (updated[p] || 0) + 0.5;
+          });
+          return updated;
+        });
+      }
+
+      setFeedbackChallenge({ id: challengeId, slotType });
+      addPoints(15, 'Completed a daily challenge');
+    };
+
+    const submitFeedback = async (rating, wouldRepeat) => {
+      if (!feedbackChallenge) return;
+      const headers = await getHeaders();
+      const session = await supabase.getValidSession();
+      if (!session) return;
+
+      // Update the most recent history entry for this challenge
+      await fetch(`${SUPABASE_URL_LOCAL}/rest/v1/user_challenge_history?user_id=eq.${session.user.id}&challenge_id=eq.${feedbackChallenge.id}&order=created_at.desc&limit=1`, {
+        method: 'PATCH',
+        headers,
+        body: JSON.stringify({ feedback_rating: rating, would_repeat: wouldRepeat })
+      });
+
+      setFeedbackChallenge(null);
+    };
+
+    const skipChallenge = async (challengeId, slotType) => {
+      const headers = await getHeaders();
+      const session = await supabase.getValidSession();
+      if (!session) return;
+      const today = new Date().toISOString().split('T')[0];
+
+      await fetch(`${SUPABASE_URL_LOCAL}/rest/v1/user_challenge_history`, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({
+          user_id: session.user.id,
+          challenge_id: challengeId,
+          challenge_date: today,
+          slot_type: slotType,
+          status: 'skipped',
+          dismissed_at: new Date().toISOString(),
+          shown_at: new Date().toISOString()
+        })
+      });
+    };
+
+    // ============================================================
+    // Helpers
+    // ============================================================
+    const getChallengeById = (id) => challenges.find(c => c.id === id);
+    const isChallengeCompleted = (id) => history.some(h => h.challenge_id === id && h.status === 'completed' && h.challenge_date === new Date().toISOString().split('T')[0]);
+
+    const slotLabel = (type) => {
+      if (type === 'quick_win') return 'Easy Start';
+      if (type === 'personal_match') return 'For You';
+      if (type === 'something_different') return 'Something Different';
+      return '';
+    };
+
+    const slotColor = (type) => {
+      if (type === 'quick_win') return 'green';
+      if (type === 'personal_match') return 'blue';
+      if (type === 'something_different') return 'purple';
+      return 'gray';
+    };
+
+    const difficultyColor = (d) => {
+      if (d === 'Easy') return 'bg-green-100 text-green-700';
+      if (d === 'Medium') return 'bg-yellow-100 text-yellow-700';
+      if (d === 'Hard') return 'bg-red-100 text-red-700';
+      return 'bg-gray-100 text-gray-700';
+    };
+
+    // ============================================================
+    // Render: Challenge Card
+    // ============================================================
+    const ChallengeCard = ({ challengeId, slotType }) => {
+      const challenge = getChallengeById(challengeId);
+      if (!challenge) return null;
+
+      const completed = isChallengeCompleted(challengeId);
+      const color = slotColor(slotType);
+      const borderColors = { green: 'border-green-500', blue: 'border-blue-500', purple: 'border-purple-500' };
+      const bgColors = { green: 'bg-green-50', blue: 'bg-blue-50', purple: 'bg-purple-50' };
+      const labelColors = { green: 'text-green-700', blue: 'text-blue-700', purple: 'text-purple-700' };
+
+      return (
+        <div className={`bg-white rounded-xl shadow-md overflow-hidden border-l-4 ${borderColors[color]} ${completed ? 'opacity-70' : ''}`}>
+          <div className="p-5">
+            <div className="flex items-center justify-between mb-2">
+              <span className={`text-xs font-bold uppercase tracking-wide ${labelColors[color]}`}>
+                {slotLabel(slotType)}
+              </span>
+              <div className="flex items-center gap-2">
+                <span className={`text-xs px-2 py-0.5 rounded-full ${difficultyColor(challenge.difficulty)}`}>
+                  {challenge.difficulty}
+                </span>
+                <span className="text-xs text-gray-500">{challenge.estimated_time}</span>
+              </div>
+            </div>
+
+            <h3 className="font-bold text-gray-800 text-lg mb-2">{challenge.title}</h3>
+            <p className="text-sm text-gray-600 leading-relaxed mb-3">{challenge.description}</p>
+
+            <div className="flex flex-wrap gap-1.5 mb-4">
+              <span className={`text-xs px-2 py-0.5 rounded-full ${bgColors[color]} ${labelColors[color]}`}>
+                {challenge.primary_pillar}
+              </span>
+              {(challenge.secondary_pillars || []).map(p => (
+                <span key={p} className="text-xs px-2 py-0.5 rounded-full bg-gray-100 text-gray-600">
+                  {p}
+                </span>
+              ))}
+            </div>
+
+            {completed ? (
+              <div className="flex items-center gap-2 p-3 bg-green-50 rounded-lg">
+                <span className="text-green-600 font-semibold text-sm">Completed today</span>
+              </div>
+            ) : (
+              <div className="flex gap-2">
+                <button
+                  onClick={() => markComplete(challengeId, slotType)}
+                  className="flex-1 bg-green-500 hover:bg-green-600 text-white rounded-lg py-2.5 font-semibold text-sm transition-colors"
+                >
+                  Done
+                </button>
+                <button
+                  onClick={() => skipChallenge(challengeId, slotType)}
+                  className="px-4 bg-gray-100 hover:bg-gray-200 text-gray-600 rounded-lg py-2.5 font-semibold text-sm transition-colors"
+                >
+                  Skip
+                </button>
+              </div>
+            )}
+          </div>
+        </div>
+      );
+    };
+
+    // ============================================================
+    // Render: Feedback Modal
+    // ============================================================
+    const FeedbackModal = () => {
+      if (!feedbackChallenge) return null;
+      const challenge = getChallengeById(feedbackChallenge.id);
+
+      return (
+        <div className="fixed inset-0 bg-black bg-opacity-50 z-50 flex items-end justify-center p-4">
+          <div className="bg-white rounded-t-2xl w-full max-w-md p-6 pb-8">
+            <h3 className="font-bold text-gray-800 text-lg mb-1">Nice work!</h3>
+            <p className="text-sm text-gray-600 mb-4">How was "{challenge?.title}"?</p>
+
+            <div className="space-y-2 mb-4">
+              {[
+                { value: 'enjoyed', label: 'Enjoyed it', emoji: '😊' },
+                { value: 'okay', label: 'It was okay', emoji: '😐' },
+                { value: 'not_for_me', label: 'Not for me', emoji: '😕' }
+              ].map(opt => (
+                <button
+                  key={opt.value}
+                  onClick={() => submitFeedback(opt.value, null)}
+                  className="w-full flex items-center gap-3 p-3 bg-gray-50 hover:bg-gray-100 rounded-lg transition-colors text-left"
+                >
+                  <span className="text-xl">{opt.emoji}</span>
+                  <span className="font-medium text-gray-800">{opt.label}</span>
+                </button>
+              ))}
+            </div>
+
+            <button
+              onClick={() => setFeedbackChallenge(null)}
+              className="w-full text-center text-sm text-gray-500 hover:text-gray-700"
+            >
+              Skip feedback
+            </button>
+          </div>
+        </div>
+      );
+    };
+
+    // ============================================================
+    // Render: Onboarding Flow
+    // ============================================================
+    const onboardingSteps = [
+      {
+        title: 'What are you interested in?',
+        subtitle: 'Select any activities you enjoy or want to try. This helps us suggest challenges you will actually like.',
+        render: () => (
+          <MultiSelect
+            options={allInterests}
+            selected={draftPrefs.interest_tags}
+            onChange={(v) => setDraftPrefs({ ...draftPrefs, interest_tags: v })}
+            columns={1}
+          />
+        )
+      },
+      {
+        title: 'What types of activities do you prefer?',
+        subtitle: 'Choose your favourite categories. You can change these later.',
+        render: () => (
+          <MultiSelect
+            options={allCategories}
+            selected={draftPrefs.preferred_categories}
+            onChange={(v) => setDraftPrefs({ ...draftPrefs, preferred_categories: v })}
+            columns={1}
+          />
+        )
+      },
+      {
+        title: 'Any categories to avoid?',
+        subtitle: 'If there are types of activities you definitely do not want, exclude them here.',
+        render: () => (
+          <MultiSelect
+            options={allCategories}
+            selected={draftPrefs.excluded_categories}
+            onChange={(v) => setDraftPrefs({ ...draftPrefs, excluded_categories: v })}
+            columns={1}
+          />
+        )
+      },
+      {
+        title: 'How much time do you usually have?',
+        subtitle: 'We will match challenges to your available time.',
+        render: () => (
+          <MultiSelect
+            options={timeOptions}
+            selected={draftPrefs.preferred_time_ranges}
+            onChange={(v) => setDraftPrefs({ ...draftPrefs, preferred_time_ranges: v })}
+            columns={1}
+          />
+        )
+      },
+      {
+        title: 'What effort level suits you?',
+        subtitle: 'This can vary day to day, so pick what feels right most of the time.',
+        render: () => (
+          <SingleSelect
+            options={energyOptions}
+            selected={draftPrefs.preferred_energy_levels[0] || 'Moderate'}
+            onChange={(v) => setDraftPrefs({ ...draftPrefs, preferred_energy_levels: [v] })}
+          />
+        )
+      },
+      {
+        title: 'A few more preferences',
+        subtitle: 'These help us fine-tune your daily suggestions.',
+        render: () => (
+          <div className="space-y-4">
+            <div>
+              <p className="text-sm font-semibold text-gray-700 mb-2">Social preference</p>
+              <SingleSelect
+                options={['Solo', 'Social', 'Either']}
+                selected={draftPrefs.preferred_social_type}
+                onChange={(v) => setDraftPrefs({ ...draftPrefs, preferred_social_type: v })}
+              />
+            </div>
+            <div>
+              <p className="text-sm font-semibold text-gray-700 mb-2">Cost</p>
+              <SingleSelect
+                options={['Free only', 'Free or low cost', 'Any']}
+                selected={draftPrefs.cost_preference}
+                onChange={(v) => setDraftPrefs({ ...draftPrefs, cost_preference: v })}
+              />
+            </div>
+            <div>
+              <p className="text-sm font-semibold text-gray-700 mb-2">Location</p>
+              <SingleSelect
+                options={['Indoors', 'Outdoors', 'Either']}
+                selected={draftPrefs.location_preference}
+                onChange={(v) => setDraftPrefs({ ...draftPrefs, location_preference: v })}
+              />
+            </div>
+          </div>
+        )
+      },
+      {
+        title: 'Any physical activities to avoid?',
+        subtitle: 'We will never suggest these. You can update this anytime.',
+        render: () => (
+          <MultiSelect
+            options={physicalExclusions}
+            selected={draftPrefs.physical_exclusions}
+            onChange={(v) => setDraftPrefs({ ...draftPrefs, physical_exclusions: v })}
+            columns={1}
+          />
+        )
+      }
+    ];
+
+    const totalOnboardingSteps = onboardingSteps.length;
+
+    // ============================================================
+    // Render: Main
+    // ============================================================
+    if (loading) {
+      return (
+        <div className="flex flex-col min-h-screen bg-gray-50 pb-20">
+          <div className="bg-orange-500 text-white p-6">
+            <button onClick={() => setActiveTool(null)} className="flex items-center mb-4 hover:opacity-80">
+              <ArrowLeft className="w-5 h-5 mr-2" />
+              <span>Back to Tools</span>
+            </button>
+            <h1 className="text-2xl font-bold">Daily Challenges</h1>
+          </div>
+          <div className="flex-1 flex items-center justify-center">
+            <div className="w-8 h-8 border-4 border-gray-200 border-t-orange-500 rounded-full animate-spin"></div>
+          </div>
+        </div>
+      );
+    }
+
+    // Show onboarding if not completed
+    if (!preferences || !preferences.onboarding_completed) {
+      const step = onboardingSteps[onboardingStep];
+      const isLast = onboardingStep === totalOnboardingSteps - 1;
+
+      return (
+        <div className="flex flex-col min-h-screen bg-gray-50 pb-20">
+          <div className="bg-orange-500 text-white p-6">
+            <button onClick={() => setActiveTool(null)} className="flex items-center mb-4 hover:opacity-80">
+              <ArrowLeft className="w-5 h-5 mr-2" />
+              <span>Back to Tools</span>
+            </button>
+            <h1 className="text-2xl font-bold">Set Up Daily Challenges</h1>
+            <p className="text-sm opacity-90 mt-1">Step {onboardingStep + 1} of {totalOnboardingSteps}</p>
+          </div>
+
+          {/* Progress bar */}
+          <div className="w-full bg-gray-200 h-1.5">
+            <div className="bg-orange-500 h-1.5 transition-all" style={{ width: `${((onboardingStep + 1) / totalOnboardingSteps) * 100}%` }}></div>
+          </div>
+
+          <div className="flex-1 p-6 overflow-y-auto">
+            <div className="max-w-md mx-auto">
+              <h2 className="text-xl font-bold text-gray-800 mb-2">{step.title}</h2>
+              <p className="text-sm text-gray-600 mb-4">{step.subtitle}</p>
+              {step.render()}
+            </div>
+          </div>
+
+          <div className="p-6 bg-white border-t border-gray-200">
+            <div className="max-w-md mx-auto flex gap-3">
+              {onboardingStep > 0 && (
+                <button
+                  onClick={() => setOnboardingStep(onboardingStep - 1)}
+                  className="flex-1 py-3 bg-gray-200 hover:bg-gray-300 text-gray-700 rounded-xl font-semibold text-sm"
+                >
+                  Back
+                </button>
+              )}
+              <button
+                onClick={async () => {
+                  if (isLast) {
+                    await savePreferences(true);
+                  } else {
+                    setOnboardingStep(onboardingStep + 1);
+                  }
+                }}
+                className="flex-1 py-3 bg-orange-500 hover:bg-orange-600 text-white rounded-xl font-semibold text-sm"
+              >
+                {isLast ? 'Finish Setup' : 'Next'}
+              </button>
+            </div>
+          </div>
+        </div>
+      );
+    }
+
+    // ============================================================
+    // Render: Daily Challenges Dashboard
+    // ============================================================
+    const quickWin = dailySet ? getChallengeById(dailySet.quick_win_challenge_id) : null;
+    const personalMatch = dailySet ? getChallengeById(dailySet.personal_match_challenge_id) : null;
+    const somethingDifferent = dailySet ? getChallengeById(dailySet.different_challenge_id) : null;
+
+    const todayCompleted = history.filter(h => h.challenge_date === new Date().toISOString().split('T')[0] && h.status === 'completed').length;
 
     return (
       <div className="flex flex-col min-h-screen bg-gray-50 pb-20">
         <div className="bg-orange-500 text-white p-6">
-          <button onClick={() => setActiveTool(null)} className="flex items-center mb-4 hover:opacity-80">
-            <ArrowLeft className="w-5 h-5 mr-2" />
-            <span>Back to Tools</span>
-          </button>
+          <div className="flex items-center justify-between mb-4">
+            <button onClick={() => setActiveTool(null)} className="flex items-center hover:opacity-80">
+              <ArrowLeft className="w-5 h-5 mr-2" />
+              <span>Back to Tools</span>
+            </button>
+            <button onClick={() => setShowSettings(!showSettings)} className="p-2 hover:bg-white hover:bg-opacity-20 rounded-lg transition-colors">
+              <span className="text-lg">⚙️</span>
+            </button>
+          </div>
           <div className="flex items-center">
             <div className="bg-white bg-opacity-20 p-3 rounded-full mr-4">
               <TrendingUp className="w-8 h-8" />
             </div>
             <div>
-              <h1 className="text-2xl font-bold">Activity Challenges</h1>
-              <p className="text-sm opacity-90">Move your body, change your mind</p>
+              <h1 className="text-2xl font-bold">Daily Challenges</h1>
+              <p className="text-sm opacity-90">
+                {todayCompleted === 0 ? 'A small step for today' :
+                 todayCompleted === 1 ? '1 activity completed today' :
+                 `${todayCompleted} activities completed today`}
+              </p>
             </div>
           </div>
         </div>
 
         <div className="flex-1 p-6 overflow-y-auto">
-          <div className="max-w-md mx-auto space-y-6">
-            
-            {/* Daily Challenges */}
-            <div className="bg-white rounded-xl shadow-md p-6">
-              <h3 className="font-bold text-gray-800 mb-4">Today's Challenges</h3>
-              <div className="space-y-3">
-                {dailyChallenges.map(challenge => {
-                  const progress = Math.min((challenge.current / challenge.goal) * 100, 100);
-                  const isComplete = challenge.current >= challenge.goal;
-                  
-                  return (
-                    <div key={challenge.id} className="space-y-2">
-                      <div className="flex items-center justify-between">
-                        <div className="flex items-center gap-2">
-                          <span className="text-2xl">{challenge.emoji}</span>
-                          <span className="font-semibold text-gray-800">{challenge.title}</span>
-                        </div>
-                        <div className="text-right">
-                          <span className={`font-bold ${isComplete ? 'text-green-600' : 'text-gray-600'}`}>
-                            {challenge.current}/{challenge.goal}
-                          </span>
-                          <span className="text-xs text-gray-500 ml-1">{challenge.unit}</span>
-                        </div>
-                      </div>
-                      <div className="w-full bg-gray-200 rounded-full h-2">
-                        <div 
-                          className={`h-2 rounded-full transition-all ${isComplete ? 'bg-green-500' : 'bg-orange-500'}`}
-                          style={{ width: `${progress}%` }}
-                        />
-                      </div>
-                      {isComplete && (
-                        <p className="text-xs text-green-600 font-semibold">✓ Complete!</p>
-                      )}
-                    </div>
-                  );
-                })}
-              </div>
-            </div>
+          <div className="max-w-md mx-auto space-y-4">
 
-            {/* Weekly Stats */}
-            <div className="bg-gradient-to-br from-orange-500 to-red-500 rounded-xl shadow-lg p-6 text-white">
-              <h3 className="font-bold mb-4">This Week</h3>
-              <div className="grid grid-cols-2 gap-4">
+            {/* Settings panel (inline toggle) */}
+            {showSettings && (
+              <div className="bg-white rounded-xl shadow-md p-5 space-y-4">
+                <h3 className="font-bold text-gray-800">Challenge Preferences</h3>
+                <p className="text-xs text-gray-500">Changes take effect tomorrow. Your history and progress are never affected.</p>
+
                 <div>
-                  <p className="text-3xl font-bold">{weeklyStats.totalMinutes}</p>
-                  <p className="text-sm opacity-90">Minutes Active</p>
+                  <p className="text-sm font-semibold text-gray-700 mb-2">Your interests</p>
+                  <MultiSelect
+                    options={allInterests}
+                    selected={draftPrefs.interest_tags}
+                    onChange={(v) => setDraftPrefs({ ...draftPrefs, interest_tags: v })}
+                    columns={1}
+                  />
                 </div>
+
                 <div>
-                  <p className="text-3xl font-bold">{weeklyStats.daysActive}/7</p>
-                  <p className="text-sm opacity-90">Days Active</p>
+                  <p className="text-sm font-semibold text-gray-700 mb-2">Categories to avoid</p>
+                  <MultiSelect
+                    options={allCategories}
+                    selected={draftPrefs.excluded_categories}
+                    onChange={(v) => setDraftPrefs({ ...draftPrefs, excluded_categories: v })}
+                    columns={1}
+                  />
                 </div>
-              </div>
-            </div>
 
-            {/* Quick Activity Buttons */}
-            <div className="bg-white rounded-xl shadow-md p-6">
-              <h3 className="font-bold text-gray-800 mb-4">Quick Log Activity</h3>
-              <div className="grid grid-cols-2 gap-3">
-                {activityTypes.slice(0, 6).map(type => (
+                <div className="flex gap-2">
                   <button
-                    key={type.id}
-                    onClick={() => {
-                      setNewActivity({ type: type.id, duration: '20', distance: '' });
-                      setShowAddActivity(true);
-                    }}
-                    className="bg-gray-50 hover:bg-gray-100 border-2 border-gray-200 rounded-lg p-4 transition-all"
+                    onClick={() => setShowSettings(false)}
+                    className="flex-1 py-2 bg-gray-200 hover:bg-gray-300 text-gray-700 rounded-lg font-semibold text-sm"
                   >
-                    <div className="text-3xl mb-2">{type.emoji}</div>
-                    <div className="text-sm font-semibold text-gray-700">{type.name}</div>
+                    Cancel
                   </button>
-                ))}
-              </div>
-              
-              <button
-                onClick={() => setShowAddActivity(true)}
-                className="w-full mt-4 bg-orange-500 hover:bg-orange-600 text-white rounded-lg py-3 font-semibold transition-colors"
-              >
-                + Log Custom Activity
-              </button>
-            </div>
-
-            {/* Add Activity Form */}
-            {showAddActivity && (
-              <div className="bg-white rounded-xl shadow-lg p-6 border-2 border-orange-500" onClick={(e) => e.stopPropagation()}>
-                <div className="flex items-center justify-between mb-4">
-                  <h3 className="font-bold text-gray-800">Log Activity</h3>
                   <button
-                    onClick={() => {
-                      setShowAddActivity(false);
-                      setNewActivity({ type: '', duration: '', distance: '' });
-                    }}
-                    className="text-gray-500 hover:text-gray-700"
+                    onClick={async () => { await savePreferences(true); setShowSettings(false); showSuccess('Preferences saved!'); }}
+                    className="flex-1 py-2 bg-green-500 hover:bg-green-600 text-white rounded-lg font-semibold text-sm"
                   >
-                    ✕
-                  </button>
-                </div>
-                
-                <div className="space-y-4">
-                  <div>
-                    <label className="block text-sm font-semibold text-gray-700 mb-2">Activity Type</label>
-                    <select
-                      value={newActivity.type}
-                      onChange={(e) => setNewActivity({...newActivity, type: e.target.value})}
-                      className="w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-orange-500"
-                    >
-                      <option value="">Select activity</option>
-                      {activityTypes.map(type => (
-                        <option key={type.id} value={type.id}>{type.emoji} {type.name}</option>
-                      ))}
-                    </select>
-                  </div>
-
-                  <div>
-                    <label className="block text-sm font-semibold text-gray-700 mb-2">Duration (minutes)</label>
-                    <input
-                      type="number"
-                      value={newActivity.duration}
-                      onChange={(e) => setNewActivity({...newActivity, duration: e.target.value})}
-                      placeholder="30"
-                      className="w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-orange-500"
-                    />
-                  </div>
-
-                  <div>
-                    <label className="block text-sm font-semibold text-gray-700 mb-2">Distance (optional)</label>
-                    <input
-                      type="text"
-                      value={newActivity.distance}
-                      onChange={(e) => setNewActivity({...newActivity, distance: e.target.value})}
-                      placeholder="5 km"
-                      className="w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-orange-500"
-                    />
-                  </div>
-
-                  <button
-                    onClick={addActivity}
-                    className="w-full bg-orange-500 hover:bg-orange-600 text-white rounded-lg py-3 font-bold transition-colors"
-                  >
-                    Log Activity
+                    Save
                   </button>
                 </div>
               </div>
             )}
 
-            {/* Today's Activities */}
-            <div className="bg-white rounded-xl shadow-md p-6">
-              <h3 className="font-bold text-gray-800 mb-4">Today's Log</h3>
-              {todayActivities.length === 0 ? (
-                <p className="text-gray-500 text-center py-4">No activities logged today</p>
-              ) : (
-                <div className="space-y-3">
-                  {todayActivities.map(activity => {
-                    const type = activityTypes.find(t => t.id === activity.type);
-                    return (
-                      <div key={activity.id} className="flex items-center justify-between p-3 bg-gray-50 rounded-lg">
-                        <div className="flex items-center gap-3">
-                          <span className="text-2xl">{type?.emoji}</span>
-                          <div>
-                            <p className="font-semibold text-gray-800">{type?.name}</p>
-                            <p className="text-sm text-gray-600">
-                              {activity.duration} min
-                              {activity.distance && ` • ${activity.distance}`}
-                            </p>
-                          </div>
-                        </div>
-                        <button
-                          onClick={() => deleteActivity(activity.id)}
-                          className="text-red-500 hover:text-red-700 text-sm"
-                        >
-                          Delete
-                        </button>
-                      </div>
-                    );
-                  })}
-                </div>
-              )}
-            </div>
+            {/* Daily challenge cards */}
+            {!dailySet || (!quickWin && !personalMatch && !somethingDifferent) ? (
+              <div className="bg-white rounded-xl shadow-md p-6 text-center">
+                <p className="text-gray-500 text-sm">No challenges available right now. Try adjusting your preferences.</p>
+              </div>
+            ) : (
+              <>
+                {quickWin && <ChallengeCard challengeId={dailySet.quick_win_challenge_id} slotType="quick_win" />}
+                {personalMatch && <ChallengeCard challengeId={dailySet.personal_match_challenge_id} slotType="personal_match" />}
+                {somethingDifferent && <ChallengeCard challengeId={dailySet.different_challenge_id} slotType="something_different" />}
+              </>
+            )}
 
-            {/* Why Movement Helps */}
-            <div className="bg-blue-50 border-l-4 border-blue-500 rounded-lg p-5">
-              <p className="text-sm text-gray-700 leading-relaxed">
-                <strong>Why this matters:</strong> Physical activity releases endorphins and reduces stress - the same feelings gambling falsely promises. Moving your body rewires your brain's reward system naturally.
-              </p>
-            </div>
+            {/* Pillar activity summary */}
+            {Object.keys(pillarStats).length > 0 && (
+              <div className="bg-white rounded-xl shadow-md p-5">
+                <h3 className="font-bold text-gray-800 mb-3">Your activity this month</h3>
+                <div className="space-y-2">
+                  {Object.entries(pillarStats)
+                    .sort(([, a], [, b]) => b - a)
+                    .map(([pillar, count]) => (
+                      <div key={pillar} className="flex items-center justify-between">
+                        <span className="text-sm text-gray-700">{pillar}</span>
+                        <span className="text-sm font-semibold text-gray-800">{Math.round(count)} {Math.round(count) === 1 ? 'activity' : 'activities'}</span>
+                      </div>
+                    ))}
+                </div>
+              </div>
+            )}
+
           </div>
         </div>
+
+        <FeedbackModal />
       </div>
     );
   };
