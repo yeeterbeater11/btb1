@@ -3821,7 +3821,7 @@ export default function BeatTheBet() {
     const saveDailySet = async (setData) => {
       const headers = await getHeaders();
       const session = await supabase.getValidSession();
-      if (!session) return;
+      if (!session) return false;
       const today = new Date().toISOString().split('T')[0];
 
       const row = {
@@ -3830,15 +3830,25 @@ export default function BeatTheBet() {
         ...setData
       };
 
-      const res = await fetch(`${SUPABASE_URL_LOCAL}/rest/v1/daily_challenge_sets`, {
-        method: 'POST',
-        headers: { ...headers, 'Prefer': 'resolution=merge-duplicates,return=representation' },
-        body: JSON.stringify(row)
-      });
+      try {
+        const res = await fetch(`${SUPABASE_URL_LOCAL}/rest/v1/daily_challenge_sets`, {
+          method: 'POST',
+          headers: { ...headers, 'Prefer': 'resolution=merge-duplicates,return=representation' },
+          body: JSON.stringify(row)
+        });
 
-      if (res.ok) {
-        const data = await res.json();
-        setDailySet(data[0] || row);
+        if (res.ok) {
+          const data = await res.json();
+          setDailySet(data[0] || row);
+          return true;
+        } else {
+          const errText = await res.text().catch(() => '');
+          console.error('saveDailySet failed:', res.status, errText);
+          return false;
+        }
+      } catch (e) {
+        console.error('saveDailySet threw:', e);
+        return false;
       }
     };
 
@@ -3872,16 +3882,20 @@ export default function BeatTheBet() {
           .sort((a, b) => b.score - a.score);
         const replacement = scored[0];
 
-        if (dailySet.different_challenge_id) {
-          setSwappedDifferentIds(prev => [...prev, dailySet.different_challenge_id]);
-        }
-
-        await saveDailySet({
+        const saved = await saveDailySet({
           quick_win_challenge_id: dailySet.quick_win_challenge_id,
           personal_match_challenge_id: dailySet.personal_match_challenge_id,
           different_challenge_id: replacement.id
         });
-        showSuccess('Swapped in something new!');
+
+        if (saved) {
+          if (dailySet.different_challenge_id) {
+            setSwappedDifferentIds(prev => [...prev, dailySet.different_challenge_id]);
+          }
+          showSuccess('Swapped in something new!');
+        } else {
+          showError('Could not save the swap. Please try again.');
+        }
       } catch (e) {
         console.error('Failed to swap Something Different:', e);
         showError('Could not swap right now. Please try again.');
