@@ -3382,6 +3382,18 @@ export default function BeatTheBet() {
     const [feedbackChallenge, setFeedbackChallenge] = React.useState(null);
     const [pillarStats, setPillarStats] = React.useState({});
 
+    // "Something Different" swap tracking (session-only, resets on reload)
+    const [swappedDifferentIds, setSwappedDifferentIds] = React.useState([]);
+    const [swappingDifferent, setSwappingDifferent] = React.useState(false);
+
+    // Recent completions collapse toggle
+    const [showRecentCompletions, setShowRecentCompletions] = React.useState(false);
+
+    // Save for later
+    const [savedChallengeIds, setSavedChallengeIds] = React.useState([]);
+    const [showSavedChallenges, setShowSavedChallenges] = React.useState(false);
+    const [savingChallengeId, setSavingChallengeId] = React.useState(null);
+
     // Discovery Journeys state
     const [journeyDefs, setJourneyDefs] = React.useState([]);
     const [journeySteps, setJourneySteps] = React.useState([]);
@@ -3389,6 +3401,10 @@ export default function BeatTheBet() {
     const [journeyOffer, setJourneyOffer] = React.useState(null); // journey def being offered
     const [showJourneyDetail, setShowJourneyDetail] = React.useState(false);
     const [showJourneyBrowser, setShowJourneyBrowser] = React.useState(false);
+
+    // Variety prompt state
+    const [varietyPrompt, setVarietyPrompt] = React.useState(null); // { pillar, count }
+    const [varietyDismissals, setVarietyDismissals] = React.useState({}); // { [pillar]: countAtDismissal }
 
     // Onboarding draft state
     const [draftPrefs, setDraftPrefs] = React.useState({
@@ -3459,14 +3475,15 @@ export default function BeatTheBet() {
 
         // Fetch challenges library, preferences, today's set, history, and journey data in parallel
         const today = new Date().toISOString().split('T')[0];
-        const [challRes, prefRes, setRes, histRes, journeyDefRes, journeyStepRes, userJourneyRes] = await Promise.all([
+        const [challRes, prefRes, setRes, histRes, journeyDefRes, journeyStepRes, userJourneyRes, savedRes] = await Promise.all([
           fetch(`${SUPABASE_URL_LOCAL}/rest/v1/daily_challenges?active=eq.true&order=challenge_key.asc`, { headers }),
           fetch(`${SUPABASE_URL_LOCAL}/rest/v1/challenge_preferences?user_id=eq.${uid}`, { headers }),
           fetch(`${SUPABASE_URL_LOCAL}/rest/v1/daily_challenge_sets?user_id=eq.${uid}&challenge_date=eq.${today}`, { headers }),
           fetch(`${SUPABASE_URL_LOCAL}/rest/v1/user_challenge_history?user_id=eq.${uid}&order=challenge_date.desc&limit=100`, { headers }),
           fetch(`${SUPABASE_URL_LOCAL}/rest/v1/challenge_journeys?active=eq.true&order=sort_order.asc`, { headers }),
           fetch(`${SUPABASE_URL_LOCAL}/rest/v1/challenge_journey_steps?order=journey_id.asc,step_number.asc`, { headers }),
-          fetch(`${SUPABASE_URL_LOCAL}/rest/v1/user_challenge_journeys?user_id=eq.${uid}&order=updated_at.desc`, { headers })
+          fetch(`${SUPABASE_URL_LOCAL}/rest/v1/user_challenge_journeys?user_id=eq.${uid}&order=updated_at.desc`, { headers }),
+          fetch(`${SUPABASE_URL_LOCAL}/rest/v1/saved_challenges?user_id=eq.${uid}&order=created_at.desc`, { headers })
         ]);
 
         const challData = challRes.ok ? await challRes.json() : [];
@@ -3476,11 +3493,13 @@ export default function BeatTheBet() {
         const journeyDefData = journeyDefRes.ok ? await journeyDefRes.json() : [];
         const journeyStepData = journeyStepRes.ok ? await journeyStepRes.json() : [];
         const userJourneyData = userJourneyRes.ok ? await userJourneyRes.json() : [];
+        const savedData = savedRes.ok ? await savedRes.json() : [];
 
         setChallenges(challData);
         setHistory(histData);
         setJourneyDefs(journeyDefData);
         setJourneySteps(journeyStepData);
+        setSavedChallengeIds(savedData.map(s => s.challenge_id));
 
         // Seed starter journeys if none exist yet (idempotent, safe to call every load)
         if (journeyDefData.length === 0) {
@@ -3494,6 +3513,7 @@ export default function BeatTheBet() {
         if (prefData.length > 0) {
           setPreferences(prefData[0]);
           setDraftPrefs({ ...draftPrefs, ...prefData[0] });
+          setVarietyDismissals(prefData[0].variety_prompt_dismissals || {});
         }
 
         // Calculate pillar stats from history
@@ -3515,6 +3535,9 @@ export default function BeatTheBet() {
         } else if (prefData.length > 0 && prefData[0].onboarding_completed && challData.length > 0) {
           await generateDailySet(challData, prefData[0], histData);
         }
+
+        // Evaluate whether to show a variety prompt (leaning heavily on one pillar lately)
+        evaluateVarietyPrompt(histData, challData, prefData.length > 0 ? (prefData[0].variety_prompt_dismissals || {}) : {});
 
         // Evaluate whether to offer a Discovery Journey (only if user has no active/paused journey already)
         if (!liveJourney) {
@@ -3584,6 +3607,75 @@ export default function BeatTheBet() {
         .map(h => h.challenge_id);
     };
 
+    // ============================================================
+    // Variety prompt
+    // ============================================================
+    // Looks at the last VARIETY_WINDOW completed challenges. If one pillar makes
+    // up VARIETY_THRESHOLD or more of them, gently suggest trying something
+    // different today. A dismissal is remembered per-pillar (by the completion
+    // count at time of dismissal) and only resurfaces once that pillar's recent
+    // frequency has increased again since — no fixed time-based cooldown.
+    const VARIETY_WINDOW = 6;
+    const VARIETY_THRESHOLD = 4;
+
+    const evaluateVarietyPrompt = (hist, challList, dismissals) => {
+      const completed = hist
+        .filter(h => h.status === 'completed')
+        .sort((a, b) => new Date(b.completed_at || b.challenge_date) - new Date(a.completed_at || a.challenge_date))
+        .slice(0, VARIETY_WINDOW);
+
+      if (completed.length < VARIETY_THRESHOLD) {
+        setVarietyPrompt(null);
+        return;
+      }
+
+      const pillarCounts = {};
+      completed.forEach(h => {
+        const chall = challList.find(c => c.id === h.challenge_id);
+        if (!chall) return;
+        pillarCounts[chall.primary_pillar] = (pillarCounts[chall.primary_pillar] || 0) + 1;
+      });
+
+      const [dominantPillar, count] = Object.entries(pillarCounts).sort(([, a], [, b]) => b - a)[0] || [];
+      if (!dominantPillar || count < VARIETY_THRESHOLD) {
+        setVarietyPrompt(null);
+        return;
+      }
+
+      const dismissedAtCount = dismissals[dominantPillar];
+      if (dismissedAtCount !== undefined && count <= dismissedAtCount) {
+        // Already dismissed for this pillar and the pattern hasn't intensified since
+        setVarietyPrompt(null);
+        return;
+      }
+
+      setVarietyPrompt({ pillar: dominantPillar, count });
+    };
+
+    const dismissVarietyPrompt = async () => {
+      if (!varietyPrompt) return;
+      const updatedDismissals = { ...varietyDismissals, [varietyPrompt.pillar]: varietyPrompt.count };
+      setVarietyDismissals(updatedDismissals);
+      setVarietyPrompt(null);
+
+      const headers = await getHeaders();
+      const session = await supabase.getValidSession();
+      if (!session) return;
+
+      try {
+        await fetch(`${SUPABASE_URL_LOCAL}/rest/v1/challenge_preferences`, {
+          method: 'POST',
+          headers: { ...headers, 'Prefer': 'resolution=merge-duplicates,return=representation' },
+          body: JSON.stringify({
+            user_id: session.user.id,
+            variety_prompt_dismissals: updatedDismissals
+          })
+        });
+      } catch (e) {
+        console.error('Failed to save variety prompt dismissal:', e);
+      }
+    };
+
     const scoreForQuickWin = (c) => {
       let score = 0;
       if (c.universal_eligibility) score += 30;
@@ -3596,19 +3688,67 @@ export default function BeatTheBet() {
       return score;
     };
 
-    const scoreForPersonalMatch = (c, prefs, hist) => {
+    // ============================================================
+    // Adaptive feedback weighting
+    // ============================================================
+    // "Similar" = same category AND at least one overlapping interest_tag.
+    // Feedback decays with age (half-life ~21 days) so recent reactions matter
+    // more than old ones, without ever fully disappearing.
+    const FEEDBACK_HALF_LIFE_DAYS = 21;
+    const feedbackRecencyWeight = (feedbackDateStr) => {
+      if (!feedbackDateStr) return 1;
+      const days = Math.max(0, (Date.now() - new Date(feedbackDateStr).getTime()) / 86400000);
+      return Math.pow(0.5, days / FEEDBACK_HALF_LIFE_DAYS);
+    };
+
+    const isSimilarChallenge = (a, b) => {
+      if (!a || !b || a.id === b.id) return false;
+      if (a.category !== b.category) return false;
+      const aTags = a.interest_tags || [];
+      const bTags = b.interest_tags || [];
+      return aTags.some(t => bTags.includes(t));
+    };
+
+    // Returns a score adjustment (can be negative) based on feedback given to
+    // OTHER challenges similar to `candidate`. Exact-challenge feedback is
+    // handled separately in scoreForPersonalMatch, so this only looks at
+    // similar-but-different challenges to avoid double-counting.
+    const computeSimilarityAdjustment = (candidate, hist, challList) => {
+      let adjustment = 0;
+      const feedbackRows = hist.filter(h => h.feedback_rating && h.challenge_id !== candidate.id);
+
+      feedbackRows.forEach(h => {
+        const pastChallenge = challList.find(c => c.id === h.challenge_id);
+        if (!pastChallenge || !isSimilarChallenge(candidate, pastChallenge)) return;
+
+        const recency = feedbackRecencyWeight(h.completed_at || h.challenge_date);
+        if (h.feedback_rating === 'enjoyed') adjustment += 6 * recency;
+        else if (h.feedback_rating === 'okay') adjustment += 1.5 * recency;
+        else if (h.feedback_rating === 'not_for_me') adjustment -= 9 * recency;
+      });
+
+      return adjustment;
+    };
+
+    const scoreForPersonalMatch = (c, prefs, hist, challList) => {
       let score = 0;
       if ((prefs.preferred_categories || []).includes(c.category)) score += 25;
       if ((c.interest_tags || []).some(t => (prefs.interest_tags || []).includes(t))) score += 20;
       if ((c.required_interest_tags || []).some(t => (prefs.interest_tags || []).includes(t))) score += 15;
 
-      // Favour challenges with positive feedback history
+      // Favour challenges with positive feedback history (exact challenge match, full strength, recency-weighted)
       const pastFeedback = hist.filter(h => h.challenge_id === c.id && h.feedback_rating);
       pastFeedback.forEach(f => {
-        if (f.feedback_rating === 'enjoyed') score += 10;
-        if (f.feedback_rating === 'okay') score += 3;
-        if (f.feedback_rating === 'not_for_me') score -= 15;
+        const recency = feedbackRecencyWeight(f.completed_at || f.challenge_date);
+        if (f.feedback_rating === 'enjoyed') score += 10 * recency;
+        if (f.feedback_rating === 'okay') score += 3 * recency;
+        if (f.feedback_rating === 'not_for_me') score -= 15 * recency;
       });
+
+      // Adaptive weighting: nudge based on feedback given to similar challenges
+      // (same category + overlapping interest tags), so a string of "not for me"
+      // in a category suppresses that whole area over time, and "enjoyed" broadens it.
+      score += computeSimilarityAdjustment(c, hist, challList);
 
       // Time preference match
       if ((prefs.preferred_time_ranges || []).includes(c.estimated_time)) score += 8;
@@ -3617,7 +3757,7 @@ export default function BeatTheBet() {
       return score;
     };
 
-    const scoreForSomethingDifferent = (c, prefs, stats) => {
+    const scoreForSomethingDifferent = (c, prefs, stats, hist, challList) => {
       let score = 0;
       // Favour underused pillars
       const pillarUsage = stats[c.primary_pillar] || 0;
@@ -3627,6 +3767,12 @@ export default function BeatTheBet() {
       if (!(prefs.preferred_categories || []).includes(c.category)) score += 10;
 
       if (c.universal_eligibility) score += 5;
+
+      // Even in "Something Different", a strong recent "not for me" signal on
+      // similar challenges should still count against a candidate — variety
+      // shouldn't mean repeatedly surfacing things the person has told us they dislike.
+      score += computeSimilarityAdjustment(c, hist, challList) * 0.5;
+
       score += Math.random() * 15;
       return score;
     };
@@ -3655,13 +3801,13 @@ export default function BeatTheBet() {
 
       // Personal Match
       const personalEligible = eligible.filter(c => !todayIds.includes(c.id));
-      const personalScored = personalEligible.map(c => ({ ...c, score: scoreForPersonalMatch(c, prefs, hist) })).sort((a, b) => b.score - a.score);
+      const personalScored = personalEligible.map(c => ({ ...c, score: scoreForPersonalMatch(c, prefs, hist, challList) })).sort((a, b) => b.score - a.score);
       const personalMatch = personalScored[0];
       todayIds.push(personalMatch.id);
 
       // Something Different
       const differentEligible = eligible.filter(c => !todayIds.includes(c.id));
-      const differentScored = differentEligible.map(c => ({ ...c, score: scoreForSomethingDifferent(c, prefs, pillarStats) })).sort((a, b) => b.score - a.score);
+      const differentScored = differentEligible.map(c => ({ ...c, score: scoreForSomethingDifferent(c, prefs, pillarStats, hist, challList) })).sort((a, b) => b.score - a.score);
       const somethingDifferent = differentScored[0];
 
       const newSet = {
@@ -3694,6 +3840,89 @@ export default function BeatTheBet() {
         const data = await res.json();
         setDailySet(data[0] || row);
       }
+    };
+
+    // ============================================================
+    // Swap "Something Different" without touching the other two slots
+    // ============================================================
+    const swapSomethingDifferent = async () => {
+      if (!dailySet || !preferences || swappingDifferent) return;
+      setSwappingDifferent(true);
+      try {
+        const recentIds = getRecentChallengeIds(history, challenges);
+        // Exclude today's other two slots, the current pick, and anything already
+        // swapped away this session so repeated taps keep surfacing new options.
+        const excludeToday = [
+          dailySet.quick_win_challenge_id,
+          dailySet.personal_match_challenge_id,
+          dailySet.different_challenge_id,
+          ...swappedDifferentIds
+        ].filter(Boolean);
+
+        const eligible = challenges.filter(c => isEligible(c, preferences, recentIds, excludeToday));
+
+        if (eligible.length === 0) {
+          showError("No other eligible options right now — you've seen them all!");
+          setSwappingDifferent(false);
+          return;
+        }
+
+        const scored = eligible
+          .map(c => ({ ...c, score: scoreForSomethingDifferent(c, preferences, pillarStats, history, challenges) }))
+          .sort((a, b) => b.score - a.score);
+        const replacement = scored[0];
+
+        if (dailySet.different_challenge_id) {
+          setSwappedDifferentIds(prev => [...prev, dailySet.different_challenge_id]);
+        }
+
+        await saveDailySet({
+          quick_win_challenge_id: dailySet.quick_win_challenge_id,
+          personal_match_challenge_id: dailySet.personal_match_challenge_id,
+          different_challenge_id: replacement.id
+        });
+        showSuccess('Swapped in something new!');
+      } catch (e) {
+        console.error('Failed to swap Something Different:', e);
+        showError('Could not swap right now. Please try again.');
+      }
+      setSwappingDifferent(false);
+    };
+
+    // ============================================================
+    // Save for later
+    // ============================================================
+    const toggleSaveChallenge = async (challengeId) => {
+      if (savingChallengeId) return; // avoid double-taps mid-request
+      setSavingChallengeId(challengeId);
+      const isSaved = savedChallengeIds.includes(challengeId);
+
+      try {
+        const headers = await getHeaders();
+        const session = await supabase.getValidSession();
+        if (!session) { setSavingChallengeId(null); return; }
+
+        if (isSaved) {
+          await fetch(`${SUPABASE_URL_LOCAL}/rest/v1/saved_challenges?user_id=eq.${session.user.id}&challenge_id=eq.${challengeId}`, {
+            method: 'DELETE',
+            headers
+          });
+          setSavedChallengeIds(prev => prev.filter(id => id !== challengeId));
+          showSuccess('Removed from saved.');
+        } else {
+          await fetch(`${SUPABASE_URL_LOCAL}/rest/v1/saved_challenges`, {
+            method: 'POST',
+            headers: { ...headers, 'Prefer': 'resolution=merge-duplicates' },
+            body: JSON.stringify({ user_id: session.user.id, challenge_id: challengeId })
+          });
+          setSavedChallengeIds(prev => [...prev, challengeId]);
+          showSuccess('Saved for later!');
+        }
+      } catch (e) {
+        console.error('Failed to toggle saved challenge:', e);
+        showError('Could not update saved challenges. Please try again.');
+      }
+      setSavingChallengeId(null);
     };
 
     // ============================================================
@@ -4000,7 +4229,8 @@ export default function BeatTheBet() {
         })
       });
 
-      setHistory(prev => [...prev, { challenge_id: challengeId, challenge_date: today, status: 'completed', slot_type: slotType }]);
+      const updatedHistory = [...history, { challenge_id: challengeId, challenge_date: today, status: 'completed', slot_type: slotType, completed_at: new Date().toISOString() }];
+      setHistory(updatedHistory);
 
       // Update pillar stats
       const chall = challenges.find(c => c.id === challengeId);
@@ -4014,6 +4244,9 @@ export default function BeatTheBet() {
           return updated;
         });
       }
+
+      // Re-check whether a variety prompt should now show, given the fresh completion
+      evaluateVarietyPrompt(updatedHistory, challenges, varietyDismissals);
 
       setFeedbackChallenge({ id: challengeId, slotType });
       addPoints(15, 'Completed a daily challenge');
@@ -4104,6 +4337,16 @@ export default function BeatTheBet() {
                 {slotLabel(slotType)}
               </span>
               <div className="flex items-center gap-2">
+                {slotType === 'something_different' && !completed && (
+                  <button
+                    onClick={swapSomethingDifferent}
+                    disabled={swappingDifferent}
+                    className={`text-xs font-semibold ${swappingDifferent ? 'text-gray-300 cursor-wait' : 'text-purple-600 hover:text-purple-800'}`}
+                    title="Swap for a different option"
+                  >
+                    {swappingDifferent ? 'Swapping…' : '🔄 Swap'}
+                  </button>
+                )}
                 <span className={`text-xs px-2 py-0.5 rounded-full ${difficultyColor(challenge.difficulty)}`}>
                   {challenge.difficulty}
                 </span>
@@ -4111,7 +4354,19 @@ export default function BeatTheBet() {
               </div>
             </div>
 
-            <h3 className="font-bold text-gray-800 text-lg mb-2">{challenge.title}</h3>
+            <div className="flex items-start justify-between gap-2 mb-2">
+              <h3 className="font-bold text-gray-800 text-lg">{challenge.title}</h3>
+              <button
+                onClick={() => toggleSaveChallenge(challengeId)}
+                disabled={savingChallengeId === challengeId}
+                className={`flex-shrink-0 text-lg transition-all ${
+                  savingChallengeId === challengeId ? 'opacity-40' : savedChallengeIds.includes(challengeId) ? 'opacity-100' : 'opacity-30 hover:opacity-70'
+                }`}
+                title={savedChallengeIds.includes(challengeId) ? 'Remove from saved' : 'Save for later'}
+              >
+                🔖
+              </button>
+            </div>
             <p className="text-sm text-gray-600 leading-relaxed mb-3">{challenge.description}</p>
 
             <div className="flex flex-wrap gap-1.5 mb-4">
@@ -4146,6 +4401,63 @@ export default function BeatTheBet() {
               </div>
             )}
           </div>
+        </div>
+      );
+    };
+
+    // ============================================================
+    // Render: Recent Completions (collapsible)
+    // ============================================================
+    const formatRecentDate = (dateStr) => {
+      if (!dateStr) return '';
+      const d = new Date(dateStr);
+      const today = new Date();
+      const yesterday = new Date();
+      yesterday.setDate(today.getDate() - 1);
+      const isSameDay = (a, b) => a.toDateString() === b.toDateString();
+      if (isSameDay(d, today)) return 'Today';
+      if (isSameDay(d, yesterday)) return 'Yesterday';
+      return d.toLocaleDateString('en-AU', { day: 'numeric', month: 'short' });
+    };
+
+    const RecentCompletionsSection = () => {
+      const recent = history
+        .filter(h => h.status === 'completed')
+        .sort((a, b) => new Date(b.completed_at || b.challenge_date) - new Date(a.completed_at || a.challenge_date))
+        .slice(0, 7);
+
+      if (recent.length === 0) return null;
+
+      return (
+        <div className="bg-white rounded-xl shadow-md overflow-hidden">
+          <button
+            onClick={() => setShowRecentCompletions(prev => !prev)}
+            className="w-full flex items-center justify-between p-5 hover:bg-gray-50 transition-colors"
+          >
+            <h3 className="font-bold text-gray-800">Recent completions</h3>
+            <ChevronRight
+              className={`w-5 h-5 text-gray-400 transition-transform ${showRecentCompletions ? 'rotate-90' : ''}`}
+            />
+          </button>
+
+          {showRecentCompletions && (
+            <div className="px-5 pb-5 space-y-2">
+              {recent.map((h, idx) => {
+                const chall = getChallengeById(h.challenge_id);
+                if (!chall) return null;
+                const feedbackEmoji = h.feedback_rating === 'enjoyed' ? '😊' : h.feedback_rating === 'okay' ? '😐' : h.feedback_rating === 'not_for_me' ? '😕' : null;
+                return (
+                  <div key={h.id || `${h.challenge_id}-${idx}`} className="flex items-center justify-between py-2 border-t border-gray-100 first:border-t-0 first:pt-0">
+                    <div className="flex-1 min-w-0">
+                      <p className="text-sm font-medium text-gray-800 truncate">{chall.title}</p>
+                      <p className="text-xs text-gray-500">{chall.primary_pillar} · {formatRecentDate(h.completed_at || h.challenge_date)}</p>
+                    </div>
+                    {feedbackEmoji && <span className="text-lg ml-2 flex-shrink-0">{feedbackEmoji}</span>}
+                  </div>
+                );
+              })}
+            </div>
+          )}
         </div>
       );
     };
@@ -4187,6 +4499,43 @@ export default function BeatTheBet() {
               Skip feedback
             </button>
           </div>
+        </div>
+      );
+    };
+
+    // ============================================================
+    // Render: Variety Prompt Banner (shown above the daily cards)
+    // ============================================================
+    const VarietyPromptBanner = () => {
+      if (!varietyPrompt) return null;
+      return (
+        <div className="bg-amber-50 border border-amber-200 rounded-xl p-4 flex items-start gap-3">
+          <span className="text-xl">🌱</span>
+          <div className="flex-1">
+            <p className="text-sm text-gray-700 leading-relaxed">
+              You've leaned a lot into <span className="font-semibold">{varietyPrompt.pillar}</span> lately. Want a fresh "Something Different" pick that steers away from it?
+            </p>
+            <div className="flex gap-2 mt-3">
+              {dailySet?.different_challenge_id && (
+                <button
+                  onClick={() => {
+                    dismissVarietyPrompt();
+                    swapSomethingDifferent();
+                  }}
+                  className="text-sm font-semibold text-amber-700 hover:text-amber-800"
+                >
+                  Yes, mix it up
+                </button>
+              )}
+              <button
+                onClick={dismissVarietyPrompt}
+                className="text-sm font-semibold text-gray-500 hover:text-gray-700"
+              >
+                No thanks
+              </button>
+            </div>
+          </div>
+          <button onClick={dismissVarietyPrompt} className="text-gray-400 hover:text-gray-600 text-lg leading-none">×</button>
         </div>
       );
     };
@@ -4412,6 +4761,68 @@ export default function BeatTheBet() {
 
             <button
               onClick={() => setShowJourneyBrowser(false)}
+              className="w-full text-center text-sm text-gray-500 hover:text-gray-700"
+            >
+              Close
+            </button>
+          </div>
+        </div>
+      );
+    };
+
+    // ============================================================
+    // Render: Saved Challenges Modal
+    // ============================================================
+    const SavedChallengesModal = () => {
+      if (!showSavedChallenges) return null;
+      const savedChallenges = savedChallengeIds
+        .map(id => getChallengeById(id))
+        .filter(Boolean);
+
+      return (
+        <div className="fixed inset-0 bg-black bg-opacity-50 z-50 flex items-end justify-center p-4">
+          <div className="bg-white rounded-t-2xl w-full max-w-md p-6 pb-8 max-h-[85vh] overflow-y-auto">
+            <h3 className="font-bold text-gray-800 text-lg mb-1">Saved for later</h3>
+            <p className="text-sm text-gray-600 mb-4">Challenges you've bookmarked to come back to.</p>
+
+            <div className="space-y-3 mb-4">
+              {savedChallenges.map(c => (
+                <div key={c.id} className="p-4 border border-gray-200 rounded-lg">
+                  <div className="flex items-start justify-between gap-2 mb-1">
+                    <p className="font-semibold text-gray-800">{c.title}</p>
+                    <button
+                      onClick={() => toggleSaveChallenge(c.id)}
+                      disabled={savingChallengeId === c.id}
+                      className="text-lg flex-shrink-0"
+                      title="Remove from saved"
+                    >
+                      🔖
+                    </button>
+                  </div>
+                  <p className="text-sm text-gray-600 mb-2">{c.description}</p>
+                  <div className="flex flex-wrap gap-1.5 mb-3">
+                    <span className="text-xs px-2 py-0.5 rounded-full bg-gray-100 text-gray-600">{c.primary_pillar}</span>
+                    <span className="text-xs px-2 py-0.5 rounded-full bg-gray-100 text-gray-600">{c.estimated_time}</span>
+                  </div>
+                  <button
+                    onClick={() => {
+                      markComplete(c.id, 'personal_match');
+                      toggleSaveChallenge(c.id);
+                      setShowSavedChallenges(false);
+                    }}
+                    className="w-full py-2 rounded-lg font-semibold text-sm bg-green-500 hover:bg-green-600 text-white"
+                  >
+                    Mark complete
+                  </button>
+                </div>
+              ))}
+              {savedChallenges.length === 0 && (
+                <p className="text-sm text-gray-500 text-center py-4">Nothing saved yet — tap the bookmark on any challenge card to save it here.</p>
+              )}
+            </div>
+
+            <button
+              onClick={() => setShowSavedChallenges(false)}
               className="w-full text-center text-sm text-gray-500 hover:text-gray-700"
             >
               Close
@@ -4691,6 +5102,9 @@ export default function BeatTheBet() {
               </div>
             )}
 
+            {/* Variety prompt banner */}
+            <VarietyPromptBanner />
+
             {/* Journey offer banner */}
             <JourneyOfferBanner />
 
@@ -4723,6 +5137,19 @@ export default function BeatTheBet() {
               </button>
             )}
 
+            {/* Saved challenges entry point */}
+            {savedChallengeIds.length > 0 && (
+              <button
+                onClick={() => setShowSavedChallenges(true)}
+                className="w-full bg-white rounded-xl shadow-md p-4 flex items-center justify-between hover:bg-gray-50 transition-colors"
+              >
+                <span className="flex items-center gap-2 text-sm font-semibold text-gray-700">
+                  <span className="text-lg">🔖</span> Saved for later ({savedChallengeIds.length})
+                </span>
+                <ChevronRight className="w-5 h-5 text-gray-400" />
+              </button>
+            )}
+
             {/* Pillar activity summary */}
             {Object.keys(pillarStats).length > 0 && (
               <div className="bg-white rounded-xl shadow-md p-5">
@@ -4740,12 +5167,16 @@ export default function BeatTheBet() {
               </div>
             )}
 
+            {/* Recent completions */}
+            <RecentCompletionsSection />
+
           </div>
         </div>
 
         <FeedbackModal />
         <JourneyDetailModal />
         <JourneyBrowserModal />
+        <SavedChallengesModal />
       </div>
     );
   };
