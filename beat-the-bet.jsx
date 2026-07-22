@@ -3480,7 +3480,7 @@ export default function BeatTheBet() {
           fetch(`${SUPABASE_URL_LOCAL}/rest/v1/challenge_preferences?user_id=eq.${uid}`, { headers }),
           fetch(`${SUPABASE_URL_LOCAL}/rest/v1/daily_challenge_sets?user_id=eq.${uid}&challenge_date=eq.${today}`, { headers }),
           fetch(`${SUPABASE_URL_LOCAL}/rest/v1/user_challenge_history?user_id=eq.${uid}&order=challenge_date.desc&limit=100`, { headers }),
-          fetch(`${SUPABASE_URL_LOCAL}/rest/v1/challenge_journeys?active=eq.true&order=sort_order.asc`, { headers }),
+          fetch(`${SUPABASE_URL_LOCAL}/rest/v1/challenge_journeys?active=eq.true&order=title.asc`, { headers }),
           fetch(`${SUPABASE_URL_LOCAL}/rest/v1/challenge_journey_steps?order=journey_id.asc,step_number.asc`, { headers }),
           fetch(`${SUPABASE_URL_LOCAL}/rest/v1/user_challenge_journeys?user_id=eq.${uid}&order=updated_at.desc`, { headers }),
           fetch(`${SUPABASE_URL_LOCAL}/rest/v1/saved_challenges?user_id=eq.${uid}&order=created_at.desc`, { headers })
@@ -3556,7 +3556,7 @@ export default function BeatTheBet() {
     // Refetch journey defs after seeding (used when the initial fetch returned empty)
     const refetchJourneyDefs = async (headers) => {
       try {
-        const res = await fetch(`${SUPABASE_URL_LOCAL}/rest/v1/challenge_journeys?active=eq.true&order=sort_order.asc`, { headers });
+        const res = await fetch(`${SUPABASE_URL_LOCAL}/rest/v1/challenge_journeys?active=eq.true&order=title.asc`, { headers });
         const data = res.ok ? await res.json() : [];
         setJourneyDefs(data);
         const stepRes = await fetch(`${SUPABASE_URL_LOCAL}/rest/v1/challenge_journey_steps?order=journey_id.asc,step_number.asc`, { headers });
@@ -3950,23 +3950,17 @@ export default function BeatTheBet() {
           description: 'A guided journey through new genres, artists, and ways to experience music — a fresh source of everyday joy.',
           primary_pillar: 'Music',
           category: 'Music',
-          icon_emoji: '🎧',
-          trigger_category: 'Music',
-          trigger_pillar: 'Music',
           active: true,
-          sort_order: 1
+          eligibility_rules: { min_total_completions: 5, min_category_completions: 3, category: 'Music' }
         };
         const mindfulnessJourney = {
           journey_key: 'mindfulness_starter',
           title: 'Building a Calmer Mind',
-          description: 'A step-by-step path through simple mindfulness practices, building from one minute of stillness into a habit that sticks.',
+          description: 'A step-by-step path through simple mindfulness practices, building from a quick check-in into a habit that sticks.',
           primary_pillar: 'Mindfulness',
           category: 'Mindfulness / Reflection',
-          icon_emoji: '🧘',
-          trigger_category: 'Mindfulness / Reflection',
-          trigger_pillar: 'Mindfulness',
           active: true,
-          sort_order: 2
+          eligibility_rules: { min_total_completions: 5, min_category_completions: 3, category: 'Mindfulness / Reflection' }
         };
 
         const journeyRes = await fetch(`${SUPABASE_URL_LOCAL}/rest/v1/challenge_journeys`, {
@@ -3979,24 +3973,28 @@ export default function BeatTheBet() {
         const music = createdJourneys.find(j => j.journey_key === 'music_discovery_starter');
         const mind = createdJourneys.find(j => j.journey_key === 'mindfulness_starter');
 
+        // Steps reference real daily_challenges rows via challenge_id — fetch the
+        // Music and Mindfulness / Reflection challenges to build each journey from.
+        const libRes = await fetch(
+          `${SUPABASE_URL_LOCAL}/rest/v1/daily_challenges?category=in.(Music,"Mindfulness / Reflection")&active=eq.true&select=id,title,category`,
+          { headers }
+        );
+        if (!libRes.ok) return;
+        const library = await libRes.json();
+
+        const musicChallenges = library.filter(c => c.category === 'Music');
+        const mindChallenges = library.filter(c => c.category === 'Mindfulness / Reflection');
+
         const steps = [];
         if (music) {
-          steps.push(
-            { journey_id: music.id, step_number: 1, title: 'Explore a genre you have never tried', description: 'Pick a genre completely outside your usual taste and listen to a full album or playlist.', estimated_time: '15–30 mins' },
-            { journey_id: music.id, step_number: 2, title: 'Find an artist from another country', description: 'Search for a popular artist from a country you have never explored musically.', estimated_time: '15–30 mins' },
-            { journey_id: music.id, step_number: 3, title: 'Build a "new discoveries" playlist', description: 'Create a playlist of 5–10 tracks you have found this week and give it a name.', estimated_time: '15–30 mins' },
-            { journey_id: music.id, step_number: 4, title: 'Go deep on one artist', description: 'Pick an artist you have enjoyed and listen through their most acclaimed album start to finish.', estimated_time: '30–60 mins' },
-            { journey_id: music.id, step_number: 5, title: 'Share your favourite find', description: 'Send your favourite new track to a friend or post it somewhere, and say why you like it.', estimated_time: 'Under 15 mins' }
-          );
+          musicChallenges.forEach((c, i) => {
+            steps.push({ journey_id: music.id, challenge_id: c.id, step_number: i + 1 });
+          });
         }
         if (mind) {
-          steps.push(
-            { journey_id: mind.id, step_number: 1, title: 'One minute of stillness', description: 'Sit quietly and focus only on your breathing for one minute. That is the whole task.', estimated_time: 'Under 15 mins' },
-            { journey_id: mind.id, step_number: 2, title: 'Body scan check-in', description: 'Spend 5 minutes slowly noticing sensations from your feet to your head.', estimated_time: 'Under 15 mins' },
-            { journey_id: mind.id, step_number: 3, title: 'Mindful walk', description: 'Take a 10 minute walk with no phone, noticing five things you can see and hear.', estimated_time: '15–30 mins' },
-            { journey_id: mind.id, step_number: 4, title: 'Write it down, then let it go', description: 'Jot down whatever is on your mind, then physically close the notebook or app as a symbolic release.', estimated_time: 'Under 15 mins' },
-            { journey_id: mind.id, step_number: 5, title: 'A full guided meditation', description: 'Use a free guided meditation (10–15 minutes) and notice how it compares to day one.', estimated_time: '15–30 mins' }
-          );
+          mindChallenges.forEach((c, i) => {
+            steps.push({ journey_id: mind.id, challenge_id: c.id, step_number: i + 1 });
+          });
         }
 
         if (steps.length > 0) {
@@ -4016,29 +4014,40 @@ export default function BeatTheBet() {
     // ============================================================
     const evaluateJourneyOffer = (hist, challList, journeyDefList, userJourneyList) => {
       const completed = hist.filter(h => h.status === 'completed');
-      if (completed.length < 5) return;
 
-      // Don't re-offer a journey the user already completed
+      // Don't re-offer a journey the user already completed, or declined/snoozed recently
+      const now = new Date();
       const unavailableJourneyIds = new Set(
-        userJourneyList.filter(j => j.status === 'completed').map(j => j.journey_id)
+        userJourneyList
+          .filter(j => {
+            if (j.status === 'completed') return true;
+            if (j.status === 'declined') return true;
+            if (j.snoozed_until && new Date(j.snoozed_until) > now) return true;
+            return false;
+          })
+          .map(j => j.journey_id)
       );
 
-      // Count completions per category/pillar
+      // Count completions per category
       const categoryCounts = {};
-      const pillarCounts = {};
       completed.forEach(h => {
         const chall = challList.find(c => c.id === h.challenge_id);
         if (!chall) return;
         categoryCounts[chall.category] = (categoryCounts[chall.category] || 0) + 1;
-        pillarCounts[chall.primary_pillar] = (pillarCounts[chall.primary_pillar] || 0) + 1;
       });
 
-      // Find a journey whose trigger category/pillar has >= 3 completions
+      // A journey's eligibility_rules jsonb carries the thresholds to unlock it,
+      // e.g. { min_total_completions: 5, min_category_completions: 3, category: 'Music' }
       const candidate = journeyDefList.find(j => {
         if (unavailableJourneyIds.has(j.id)) return false;
-        const catCount = categoryCounts[j.trigger_category] || 0;
-        const pillarCount = pillarCounts[j.trigger_pillar] || 0;
-        return catCount >= 3 || pillarCount >= 3;
+        const rules = j.eligibility_rules || {};
+        const minTotal = rules.min_total_completions ?? 5;
+        const minCategory = rules.min_category_completions ?? 3;
+        if (completed.length < minTotal) return false;
+        if (rules.category) {
+          return (categoryCounts[rules.category] || 0) >= minCategory;
+        }
+        return true;
       });
 
       if (candidate) {
@@ -4047,6 +4056,10 @@ export default function BeatTheBet() {
     };
 
     const getJourneyStepsFor = (journeyId) => journeySteps.filter(s => s.journey_id === journeyId).sort((a, b) => a.step_number - b.step_number);
+
+    // A journey step's content (title/description/estimated_time) lives on the
+    // daily_challenges row it references via challenge_id, not on the step itself.
+    const getStepChallenge = (step) => step ? getChallengeById(step.challenge_id) : null;
 
     // ============================================================
     // Discovery Journeys: actions
@@ -4060,7 +4073,7 @@ export default function BeatTheBet() {
         user_id: session.user.id,
         journey_id: journeyDef.id,
         status: 'active',
-        current_step_number: 1,
+        current_step: 1,
         started_at: new Date().toISOString(),
         updated_at: new Date().toISOString()
       };
@@ -4078,6 +4091,8 @@ export default function BeatTheBet() {
           setShowJourneyBrowser(false);
           showSuccess(`Started "${journeyDef.title}"!`);
         } else {
+          const errText = await res.text().catch(() => '');
+          console.error('startJourney failed:', res.status, errText);
           showError('Could not start journey. Please try again.');
         }
       } catch (e) {
@@ -4087,10 +4102,10 @@ export default function BeatTheBet() {
     };
 
     const updateActiveJourney = async (patch) => {
-      if (!activeJourney) return;
+      if (!activeJourney) return false;
       const headers = await getHeaders();
       const session = await supabase.getValidSession();
-      if (!session) return;
+      if (!session) return false;
 
       const row = { ...patch, updated_at: new Date().toISOString() };
       try {
@@ -4102,9 +4117,15 @@ export default function BeatTheBet() {
         if (res.ok) {
           const data = await res.json();
           setActiveJourney(data[0] || { ...activeJourney, ...row });
+          return true;
+        } else {
+          const errText = await res.text().catch(() => '');
+          console.error('updateActiveJourney failed:', res.status, errText);
+          return false;
         }
       } catch (e) {
         console.error('Failed to update journey:', e);
+        return false;
       }
     };
 
@@ -4112,33 +4133,34 @@ export default function BeatTheBet() {
       if (!activeJourney) return;
       const journeyDef = journeyDefs.find(j => j.id === activeJourney.journey_id);
       const steps = getJourneyStepsFor(activeJourney.journey_id);
-      const currentStep = steps.find(s => s.step_number === activeJourney.current_step_number);
-      const isFinalStep = !steps.some(s => s.step_number === activeJourney.current_step_number + 1);
+      const currentStep = steps.find(s => s.step_number === activeJourney.current_step);
+      const isFinalStep = !steps.some(s => s.step_number === activeJourney.current_step + 1);
+      const stepChallenge = getStepChallenge(currentStep);
 
       const session = await supabase.getValidSession();
       if (!session) return;
 
-      // Journey progress lives entirely in user_challenge_journeys (current_step_number / status /
-      // completed_at) — that's the source of truth, so we don't duplicate it into
+      // Journey progress lives entirely in user_challenge_journeys (current_step /
+      // status / completed_at) — that's the source of truth, so we don't duplicate it into
       // user_challenge_history, which is scoped to daily_challenges completions.
-      addPoints(15, `Completed journey step: ${currentStep?.title || 'Journey step'}`);
+      addPoints(15, `Completed journey step: ${stepChallenge?.title || 'Journey step'}`);
 
       if (isFinalStep) {
         await updateActiveJourney({ status: 'completed', completed_at: new Date().toISOString() });
         showSuccess(`You finished "${journeyDef?.title}"! 🎉`);
       } else {
-        await updateActiveJourney({ current_step_number: activeJourney.current_step_number + 1 });
+        await updateActiveJourney({ current_step: activeJourney.current_step + 1 });
         showSuccess('Journey step complete — nice progress!');
       }
     };
 
     const pauseJourney = async () => {
-      await updateActiveJourney({ status: 'paused' });
+      await updateActiveJourney({ status: 'paused', paused_at: new Date().toISOString() });
       showSuccess('Journey paused. Resume anytime.');
     };
 
     const resumeJourney = async () => {
-      await updateActiveJourney({ status: 'active' });
+      await updateActiveJourney({ status: 'active', paused_at: null });
       showSuccess('Journey resumed!');
     };
 
@@ -4562,7 +4584,7 @@ export default function BeatTheBet() {
       return (
         <div className="bg-gradient-to-br from-indigo-500 to-purple-600 rounded-xl shadow-md p-5 text-white">
           <div className="flex items-start gap-3">
-            <span className="text-3xl">{journeyOffer.icon_emoji || '🧭'}</span>
+            <span className="text-3xl">🧭</span>
             <div className="flex-1">
               <p className="text-xs font-bold uppercase tracking-wide opacity-90 mb-1">Discovery Journey unlocked</p>
               <h3 className="font-bold text-lg mb-1">{journeyOffer.title}</h3>
@@ -4595,7 +4617,8 @@ export default function BeatTheBet() {
       const journeyDef = journeyDefs.find(j => j.id === activeJourney.journey_id);
       if (!journeyDef) return null;
       const steps = getJourneyStepsFor(activeJourney.journey_id);
-      const currentStep = steps.find(s => s.step_number === activeJourney.current_step_number);
+      const currentStep = steps.find(s => s.step_number === activeJourney.current_step);
+      const currentStepChallenge = getStepChallenge(currentStep);
       const totalSteps = steps.length;
       const isPaused = activeJourney.status === 'paused';
 
@@ -4604,7 +4627,7 @@ export default function BeatTheBet() {
           <div className="p-5">
             <div className="flex items-center justify-between mb-2">
               <span className="text-xs font-bold uppercase tracking-wide text-indigo-700">
-                {journeyDef.icon_emoji} Journey · Step {activeJourney.current_step_number} of {totalSteps}
+                🧭 Journey · Step {activeJourney.current_step} of {totalSteps}
               </span>
               {isPaused && (
                 <span className="text-xs px-2 py-0.5 rounded-full bg-gray-100 text-gray-600">Paused</span>
@@ -4613,10 +4636,10 @@ export default function BeatTheBet() {
 
             <h3 className="font-bold text-gray-800 text-lg mb-1">{journeyDef.title}</h3>
 
-            {currentStep && (
+            {currentStepChallenge && (
               <>
-                <p className="text-sm font-semibold text-gray-700 mb-1">{currentStep.title}</p>
-                <p className="text-sm text-gray-600 leading-relaxed mb-3">{currentStep.description}</p>
+                <p className="text-sm font-semibold text-gray-700 mb-1">{currentStepChallenge.title}</p>
+                <p className="text-sm text-gray-600 leading-relaxed mb-3">{currentStepChallenge.description}</p>
               </>
             )}
 
@@ -4624,7 +4647,7 @@ export default function BeatTheBet() {
             <div className="w-full bg-gray-100 h-1.5 rounded-full mb-4">
               <div
                 className="bg-indigo-500 h-1.5 rounded-full transition-all"
-                style={{ width: `${(activeJourney.current_step_number / totalSteps) * 100}%` }}
+                style={{ width: `${(activeJourney.current_step / totalSteps) * 100}%` }}
               ></div>
             </div>
 
@@ -4670,15 +4693,16 @@ export default function BeatTheBet() {
         <div className="fixed inset-0 bg-black bg-opacity-50 z-50 flex items-end justify-center p-4">
           <div className="bg-white rounded-t-2xl w-full max-w-md p-6 pb-8 max-h-[85vh] overflow-y-auto">
             <div className="flex items-center gap-2 mb-1">
-              <span className="text-2xl">{journeyDef.icon_emoji}</span>
+              <span className="text-2xl">🧭</span>
               <h3 className="font-bold text-gray-800 text-lg">{journeyDef.title}</h3>
             </div>
             <p className="text-sm text-gray-600 mb-4">{journeyDef.description}</p>
 
             <div className="space-y-2 mb-5">
               {steps.map(step => {
-                const isDone = step.step_number < activeJourney.current_step_number;
-                const isCurrent = step.step_number === activeJourney.current_step_number;
+                const stepChallenge = getStepChallenge(step);
+                const isDone = step.step_number < activeJourney.current_step;
+                const isCurrent = step.step_number === activeJourney.current_step;
                 return (
                   <div
                     key={step.id || step.step_number}
@@ -4690,10 +4714,10 @@ export default function BeatTheBet() {
                       <span className={`text-xs font-bold ${isDone ? 'text-green-600' : isCurrent ? 'text-indigo-600' : 'text-gray-400'}`}>
                         Step {step.step_number}{isDone ? ' · Done' : isCurrent ? ' · Current' : ''}
                       </span>
-                      <span className="text-xs text-gray-400">{step.estimated_time}</span>
+                      <span className="text-xs text-gray-400">{stepChallenge?.estimated_time}</span>
                     </div>
-                    <p className="text-sm font-semibold text-gray-800 mt-1">{step.title}</p>
-                    {isCurrent && <p className="text-xs text-gray-600 mt-1">{step.description}</p>}
+                    <p className="text-sm font-semibold text-gray-800 mt-1">{stepChallenge?.title || 'Challenge unavailable'}</p>
+                    {isCurrent && stepChallenge && <p className="text-xs text-gray-600 mt-1">{stepChallenge.description}</p>}
                   </div>
                 );
               })}
@@ -4753,7 +4777,7 @@ export default function BeatTheBet() {
               {journeyDefs.map(j => (
                 <div key={j.id} className="p-4 border border-gray-200 rounded-lg">
                   <div className="flex items-center gap-2 mb-1">
-                    <span className="text-xl">{j.icon_emoji}</span>
+                    <span className="text-xl">🧭</span>
                     <p className="font-semibold text-gray-800">{j.title}</p>
                   </div>
                   <p className="text-sm text-gray-600 mb-3">{j.description}</p>
