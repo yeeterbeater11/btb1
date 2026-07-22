@@ -3382,6 +3382,14 @@ export default function BeatTheBet() {
     const [feedbackChallenge, setFeedbackChallenge] = React.useState(null);
     const [pillarStats, setPillarStats] = React.useState({});
 
+    // Discovery Journeys state
+    const [journeyDefs, setJourneyDefs] = React.useState([]);
+    const [journeySteps, setJourneySteps] = React.useState([]);
+    const [activeJourney, setActiveJourney] = React.useState(null); // user_challenge_journeys row (active or paused)
+    const [journeyOffer, setJourneyOffer] = React.useState(null); // journey def being offered
+    const [showJourneyDetail, setShowJourneyDetail] = React.useState(false);
+    const [showJourneyBrowser, setShowJourneyBrowser] = React.useState(false);
+
     // Onboarding draft state
     const [draftPrefs, setDraftPrefs] = React.useState({
       interest_tags: [],
@@ -3449,22 +3457,39 @@ export default function BeatTheBet() {
         if (!session) { setLoading(false); return; }
         const uid = session.user.id;
 
-        // Fetch challenges library, preferences, today's set, and history in parallel
+        // Fetch challenges library, preferences, today's set, history, and journey data in parallel
         const today = new Date().toISOString().split('T')[0];
-        const [challRes, prefRes, setRes, histRes] = await Promise.all([
+        const [challRes, prefRes, setRes, histRes, journeyDefRes, journeyStepRes, userJourneyRes] = await Promise.all([
           fetch(`${SUPABASE_URL_LOCAL}/rest/v1/daily_challenges?active=eq.true&order=challenge_key.asc`, { headers }),
           fetch(`${SUPABASE_URL_LOCAL}/rest/v1/challenge_preferences?user_id=eq.${uid}`, { headers }),
           fetch(`${SUPABASE_URL_LOCAL}/rest/v1/daily_challenge_sets?user_id=eq.${uid}&challenge_date=eq.${today}`, { headers }),
-          fetch(`${SUPABASE_URL_LOCAL}/rest/v1/user_challenge_history?user_id=eq.${uid}&order=challenge_date.desc&limit=100`, { headers })
+          fetch(`${SUPABASE_URL_LOCAL}/rest/v1/user_challenge_history?user_id=eq.${uid}&order=challenge_date.desc&limit=100`, { headers }),
+          fetch(`${SUPABASE_URL_LOCAL}/rest/v1/challenge_journeys?active=eq.true&order=sort_order.asc`, { headers }),
+          fetch(`${SUPABASE_URL_LOCAL}/rest/v1/challenge_journey_steps?order=journey_id.asc,step_number.asc`, { headers }),
+          fetch(`${SUPABASE_URL_LOCAL}/rest/v1/user_challenge_journeys?user_id=eq.${uid}&order=updated_at.desc`, { headers })
         ]);
 
         const challData = challRes.ok ? await challRes.json() : [];
         const prefData = prefRes.ok ? await prefRes.json() : [];
         const setData = setRes.ok ? await setRes.json() : [];
         const histData = histRes.ok ? await histRes.json() : [];
+        const journeyDefData = journeyDefRes.ok ? await journeyDefRes.json() : [];
+        const journeyStepData = journeyStepRes.ok ? await journeyStepRes.json() : [];
+        const userJourneyData = userJourneyRes.ok ? await userJourneyRes.json() : [];
 
         setChallenges(challData);
         setHistory(histData);
+        setJourneyDefs(journeyDefData);
+        setJourneySteps(journeyStepData);
+
+        // Seed starter journeys if none exist yet (idempotent, safe to call every load)
+        if (journeyDefData.length === 0) {
+          await seedStarterJourneys(headers);
+        }
+
+        // Determine active/paused journey (most recently updated non-abandoned, non-completed one first)
+        const liveJourney = userJourneyData.find(j => j.status === 'active' || j.status === 'paused');
+        setActiveJourney(liveJourney || null);
 
         if (prefData.length > 0) {
           setPreferences(prefData[0]);
@@ -3490,10 +3515,35 @@ export default function BeatTheBet() {
         } else if (prefData.length > 0 && prefData[0].onboarding_completed && challData.length > 0) {
           await generateDailySet(challData, prefData[0], histData);
         }
+
+        // Evaluate whether to offer a Discovery Journey (only if user has no active/paused journey already)
+        if (!liveJourney) {
+          let defsForEval = journeyDefData;
+          if (defsForEval.length === 0) {
+            defsForEval = await refetchJourneyDefs(headers);
+          }
+          evaluateJourneyOffer(histData, challData, defsForEval, userJourneyData);
+        }
       } catch (e) {
         console.error('Failed to load challenges:', e);
       }
       setLoading(false);
+    };
+
+    // Refetch journey defs after seeding (used when the initial fetch returned empty)
+    const refetchJourneyDefs = async (headers) => {
+      try {
+        const res = await fetch(`${SUPABASE_URL_LOCAL}/rest/v1/challenge_journeys?active=eq.true&order=sort_order.asc`, { headers });
+        const data = res.ok ? await res.json() : [];
+        setJourneyDefs(data);
+        const stepRes = await fetch(`${SUPABASE_URL_LOCAL}/rest/v1/challenge_journey_steps?order=journey_id.asc,step_number.asc`, { headers });
+        const stepData = stepRes.ok ? await stepRes.json() : [];
+        setJourneySteps(stepData);
+        return data;
+      } catch (e) {
+        console.error('Failed to refetch journeys:', e);
+        return [];
+      }
     };
 
     // ============================================================
@@ -3644,6 +3694,216 @@ export default function BeatTheBet() {
         const data = await res.json();
         setDailySet(data[0] || row);
       }
+    };
+
+    // ============================================================
+    // Discovery Journeys: seeding
+    // ============================================================
+    const seedStarterJourneys = async (headers) => {
+      try {
+        const musicJourney = {
+          journey_key: 'music_discovery_starter',
+          title: 'Discover Your New Favourite Sound',
+          description: 'A guided journey through new genres, artists, and ways to experience music — a fresh source of everyday joy.',
+          primary_pillar: 'Music',
+          category: 'Music',
+          icon_emoji: '🎧',
+          trigger_category: 'Music',
+          trigger_pillar: 'Music',
+          active: true,
+          sort_order: 1
+        };
+        const mindfulnessJourney = {
+          journey_key: 'mindfulness_starter',
+          title: 'Building a Calmer Mind',
+          description: 'A step-by-step path through simple mindfulness practices, building from one minute of stillness into a habit that sticks.',
+          primary_pillar: 'Mindfulness',
+          category: 'Mindfulness / Reflection',
+          icon_emoji: '🧘',
+          trigger_category: 'Mindfulness / Reflection',
+          trigger_pillar: 'Mindfulness',
+          active: true,
+          sort_order: 2
+        };
+
+        const journeyRes = await fetch(`${SUPABASE_URL_LOCAL}/rest/v1/challenge_journeys`, {
+          method: 'POST',
+          headers: { ...headers, 'Prefer': 'return=representation' },
+          body: JSON.stringify([musicJourney, mindfulnessJourney])
+        });
+        if (!journeyRes.ok) return;
+        const createdJourneys = await journeyRes.json();
+        const music = createdJourneys.find(j => j.journey_key === 'music_discovery_starter');
+        const mind = createdJourneys.find(j => j.journey_key === 'mindfulness_starter');
+
+        const steps = [];
+        if (music) {
+          steps.push(
+            { journey_id: music.id, step_number: 1, title: 'Explore a genre you have never tried', description: 'Pick a genre completely outside your usual taste and listen to a full album or playlist.', estimated_time: '15–30 mins' },
+            { journey_id: music.id, step_number: 2, title: 'Find an artist from another country', description: 'Search for a popular artist from a country you have never explored musically.', estimated_time: '15–30 mins' },
+            { journey_id: music.id, step_number: 3, title: 'Build a "new discoveries" playlist', description: 'Create a playlist of 5–10 tracks you have found this week and give it a name.', estimated_time: '15–30 mins' },
+            { journey_id: music.id, step_number: 4, title: 'Go deep on one artist', description: 'Pick an artist you have enjoyed and listen through their most acclaimed album start to finish.', estimated_time: '30–60 mins' },
+            { journey_id: music.id, step_number: 5, title: 'Share your favourite find', description: 'Send your favourite new track to a friend or post it somewhere, and say why you like it.', estimated_time: 'Under 15 mins' }
+          );
+        }
+        if (mind) {
+          steps.push(
+            { journey_id: mind.id, step_number: 1, title: 'One minute of stillness', description: 'Sit quietly and focus only on your breathing for one minute. That is the whole task.', estimated_time: 'Under 15 mins' },
+            { journey_id: mind.id, step_number: 2, title: 'Body scan check-in', description: 'Spend 5 minutes slowly noticing sensations from your feet to your head.', estimated_time: 'Under 15 mins' },
+            { journey_id: mind.id, step_number: 3, title: 'Mindful walk', description: 'Take a 10 minute walk with no phone, noticing five things you can see and hear.', estimated_time: '15–30 mins' },
+            { journey_id: mind.id, step_number: 4, title: 'Write it down, then let it go', description: 'Jot down whatever is on your mind, then physically close the notebook or app as a symbolic release.', estimated_time: 'Under 15 mins' },
+            { journey_id: mind.id, step_number: 5, title: 'A full guided meditation', description: 'Use a free guided meditation (10–15 minutes) and notice how it compares to day one.', estimated_time: '15–30 mins' }
+          );
+        }
+
+        if (steps.length > 0) {
+          await fetch(`${SUPABASE_URL_LOCAL}/rest/v1/challenge_journey_steps`, {
+            method: 'POST',
+            headers: { ...headers, 'Prefer': 'return=representation' },
+            body: JSON.stringify(steps)
+          });
+        }
+      } catch (e) {
+        console.error('Failed to seed starter journeys:', e);
+      }
+    };
+
+    // ============================================================
+    // Discovery Journeys: offer eligibility
+    // ============================================================
+    const evaluateJourneyOffer = (hist, challList, journeyDefList, userJourneyList) => {
+      const completed = hist.filter(h => h.status === 'completed');
+      if (completed.length < 5) return;
+
+      // Don't re-offer a journey the user already completed
+      const unavailableJourneyIds = new Set(
+        userJourneyList.filter(j => j.status === 'completed').map(j => j.journey_id)
+      );
+
+      // Count completions per category/pillar
+      const categoryCounts = {};
+      const pillarCounts = {};
+      completed.forEach(h => {
+        const chall = challList.find(c => c.id === h.challenge_id);
+        if (!chall) return;
+        categoryCounts[chall.category] = (categoryCounts[chall.category] || 0) + 1;
+        pillarCounts[chall.primary_pillar] = (pillarCounts[chall.primary_pillar] || 0) + 1;
+      });
+
+      // Find a journey whose trigger category/pillar has >= 3 completions
+      const candidate = journeyDefList.find(j => {
+        if (unavailableJourneyIds.has(j.id)) return false;
+        const catCount = categoryCounts[j.trigger_category] || 0;
+        const pillarCount = pillarCounts[j.trigger_pillar] || 0;
+        return catCount >= 3 || pillarCount >= 3;
+      });
+
+      if (candidate) {
+        setJourneyOffer(candidate);
+      }
+    };
+
+    const getJourneyStepsFor = (journeyId) => journeySteps.filter(s => s.journey_id === journeyId).sort((a, b) => a.step_number - b.step_number);
+
+    // ============================================================
+    // Discovery Journeys: actions
+    // ============================================================
+    const startJourney = async (journeyDef) => {
+      const headers = await getHeaders();
+      const session = await supabase.getValidSession();
+      if (!session) return;
+
+      const row = {
+        user_id: session.user.id,
+        journey_id: journeyDef.id,
+        status: 'active',
+        current_step_number: 1,
+        started_at: new Date().toISOString(),
+        updated_at: new Date().toISOString()
+      };
+
+      try {
+        const res = await fetch(`${SUPABASE_URL_LOCAL}/rest/v1/user_challenge_journeys`, {
+          method: 'POST',
+          headers: { ...headers, 'Prefer': 'return=representation' },
+          body: JSON.stringify(row)
+        });
+        if (res.ok) {
+          const data = await res.json();
+          setActiveJourney(data[0] || row);
+          setJourneyOffer(null);
+          setShowJourneyBrowser(false);
+          showSuccess(`Started "${journeyDef.title}"!`);
+        } else {
+          showError('Could not start journey. Please try again.');
+        }
+      } catch (e) {
+        console.error('Failed to start journey:', e);
+        showError('Could not start journey. Please try again.');
+      }
+    };
+
+    const updateActiveJourney = async (patch) => {
+      if (!activeJourney) return;
+      const headers = await getHeaders();
+      const session = await supabase.getValidSession();
+      if (!session) return;
+
+      const row = { ...patch, updated_at: new Date().toISOString() };
+      try {
+        const res = await fetch(`${SUPABASE_URL_LOCAL}/rest/v1/user_challenge_journeys?id=eq.${activeJourney.id}`, {
+          method: 'PATCH',
+          headers: { ...headers, 'Prefer': 'return=representation' },
+          body: JSON.stringify(row)
+        });
+        if (res.ok) {
+          const data = await res.json();
+          setActiveJourney(data[0] || { ...activeJourney, ...row });
+        }
+      } catch (e) {
+        console.error('Failed to update journey:', e);
+      }
+    };
+
+    const completeJourneyStep = async () => {
+      if (!activeJourney) return;
+      const journeyDef = journeyDefs.find(j => j.id === activeJourney.journey_id);
+      const steps = getJourneyStepsFor(activeJourney.journey_id);
+      const currentStep = steps.find(s => s.step_number === activeJourney.current_step_number);
+      const isFinalStep = !steps.some(s => s.step_number === activeJourney.current_step_number + 1);
+
+      const session = await supabase.getValidSession();
+      if (!session) return;
+
+      // Journey progress lives entirely in user_challenge_journeys (current_step_number / status /
+      // completed_at) — that's the source of truth, so we don't duplicate it into
+      // user_challenge_history, which is scoped to daily_challenges completions.
+      addPoints(15, `Completed journey step: ${currentStep?.title || 'Journey step'}`);
+
+      if (isFinalStep) {
+        await updateActiveJourney({ status: 'completed', completed_at: new Date().toISOString() });
+        showSuccess(`You finished "${journeyDef?.title}"! 🎉`);
+      } else {
+        await updateActiveJourney({ current_step_number: activeJourney.current_step_number + 1 });
+        showSuccess('Journey step complete — nice progress!');
+      }
+    };
+
+    const pauseJourney = async () => {
+      await updateActiveJourney({ status: 'paused' });
+      showSuccess('Journey paused. Resume anytime.');
+    };
+
+    const resumeJourney = async () => {
+      await updateActiveJourney({ status: 'active' });
+      showSuccess('Journey resumed!');
+    };
+
+    const leaveJourney = async () => {
+      await updateActiveJourney({ status: 'abandoned' });
+      setActiveJourney(null);
+      setShowJourneyDetail(false);
+      showSuccess('Journey left. You can start a new one anytime.');
     };
 
     // ============================================================
@@ -3932,6 +4192,236 @@ export default function BeatTheBet() {
     };
 
     // ============================================================
+    // Render: Journey Offer Banner (shown above the daily cards)
+    // ============================================================
+    const JourneyOfferBanner = () => {
+      if (!journeyOffer) return null;
+      return (
+        <div className="bg-gradient-to-br from-indigo-500 to-purple-600 rounded-xl shadow-md p-5 text-white">
+          <div className="flex items-start gap-3">
+            <span className="text-3xl">{journeyOffer.icon_emoji || '🧭'}</span>
+            <div className="flex-1">
+              <p className="text-xs font-bold uppercase tracking-wide opacity-90 mb-1">Discovery Journey unlocked</p>
+              <h3 className="font-bold text-lg mb-1">{journeyOffer.title}</h3>
+              <p className="text-sm opacity-90 leading-relaxed mb-3">{journeyOffer.description}</p>
+              <div className="flex gap-2">
+                <button
+                  onClick={() => startJourney(journeyOffer)}
+                  className="flex-1 bg-white text-indigo-700 rounded-lg py-2.5 font-semibold text-sm hover:bg-opacity-90 transition-colors"
+                >
+                  Start journey
+                </button>
+                <button
+                  onClick={() => setJourneyOffer(null)}
+                  className="px-4 bg-white bg-opacity-20 hover:bg-opacity-30 text-white rounded-lg py-2.5 font-semibold text-sm transition-colors"
+                >
+                  Not now
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      );
+    };
+
+    // ============================================================
+    // Render: Active Journey Card (4th card below the daily 3)
+    // ============================================================
+    const JourneyCard = () => {
+      if (!activeJourney) return null;
+      const journeyDef = journeyDefs.find(j => j.id === activeJourney.journey_id);
+      if (!journeyDef) return null;
+      const steps = getJourneyStepsFor(activeJourney.journey_id);
+      const currentStep = steps.find(s => s.step_number === activeJourney.current_step_number);
+      const totalSteps = steps.length;
+      const isPaused = activeJourney.status === 'paused';
+
+      return (
+        <div className={`bg-white rounded-xl shadow-md overflow-hidden border-l-4 border-indigo-500 ${isPaused ? 'opacity-70' : ''}`}>
+          <div className="p-5">
+            <div className="flex items-center justify-between mb-2">
+              <span className="text-xs font-bold uppercase tracking-wide text-indigo-700">
+                {journeyDef.icon_emoji} Journey · Step {activeJourney.current_step_number} of {totalSteps}
+              </span>
+              {isPaused && (
+                <span className="text-xs px-2 py-0.5 rounded-full bg-gray-100 text-gray-600">Paused</span>
+              )}
+            </div>
+
+            <h3 className="font-bold text-gray-800 text-lg mb-1">{journeyDef.title}</h3>
+
+            {currentStep && (
+              <>
+                <p className="text-sm font-semibold text-gray-700 mb-1">{currentStep.title}</p>
+                <p className="text-sm text-gray-600 leading-relaxed mb-3">{currentStep.description}</p>
+              </>
+            )}
+
+            {/* Progress bar */}
+            <div className="w-full bg-gray-100 h-1.5 rounded-full mb-4">
+              <div
+                className="bg-indigo-500 h-1.5 rounded-full transition-all"
+                style={{ width: `${(activeJourney.current_step_number / totalSteps) * 100}%` }}
+              ></div>
+            </div>
+
+            <div className="flex gap-2">
+              {!isPaused ? (
+                <button
+                  onClick={completeJourneyStep}
+                  className="flex-1 bg-indigo-500 hover:bg-indigo-600 text-white rounded-lg py-2.5 font-semibold text-sm transition-colors"
+                >
+                  Mark step complete
+                </button>
+              ) : (
+                <button
+                  onClick={resumeJourney}
+                  className="flex-1 bg-indigo-500 hover:bg-indigo-600 text-white rounded-lg py-2.5 font-semibold text-sm transition-colors"
+                >
+                  Resume journey
+                </button>
+              )}
+              <button
+                onClick={() => setShowJourneyDetail(true)}
+                className="px-4 bg-gray-100 hover:bg-gray-200 text-gray-600 rounded-lg py-2.5 font-semibold text-sm transition-colors"
+              >
+                View
+              </button>
+            </div>
+          </div>
+        </div>
+      );
+    };
+
+    // ============================================================
+    // Render: Journey Detail Modal (all steps, pause/resume/leave)
+    // ============================================================
+    const JourneyDetailModal = () => {
+      if (!showJourneyDetail || !activeJourney) return null;
+      const journeyDef = journeyDefs.find(j => j.id === activeJourney.journey_id);
+      if (!journeyDef) return null;
+      const steps = getJourneyStepsFor(activeJourney.journey_id);
+      const isPaused = activeJourney.status === 'paused';
+
+      return (
+        <div className="fixed inset-0 bg-black bg-opacity-50 z-50 flex items-end justify-center p-4">
+          <div className="bg-white rounded-t-2xl w-full max-w-md p-6 pb-8 max-h-[85vh] overflow-y-auto">
+            <div className="flex items-center gap-2 mb-1">
+              <span className="text-2xl">{journeyDef.icon_emoji}</span>
+              <h3 className="font-bold text-gray-800 text-lg">{journeyDef.title}</h3>
+            </div>
+            <p className="text-sm text-gray-600 mb-4">{journeyDef.description}</p>
+
+            <div className="space-y-2 mb-5">
+              {steps.map(step => {
+                const isDone = step.step_number < activeJourney.current_step_number;
+                const isCurrent = step.step_number === activeJourney.current_step_number;
+                return (
+                  <div
+                    key={step.id || step.step_number}
+                    className={`p-3 rounded-lg border ${
+                      isCurrent ? 'border-indigo-400 bg-indigo-50' : isDone ? 'border-green-200 bg-green-50' : 'border-gray-200 bg-gray-50'
+                    }`}
+                  >
+                    <div className="flex items-center justify-between">
+                      <span className={`text-xs font-bold ${isDone ? 'text-green-600' : isCurrent ? 'text-indigo-600' : 'text-gray-400'}`}>
+                        Step {step.step_number}{isDone ? ' · Done' : isCurrent ? ' · Current' : ''}
+                      </span>
+                      <span className="text-xs text-gray-400">{step.estimated_time}</span>
+                    </div>
+                    <p className="text-sm font-semibold text-gray-800 mt-1">{step.title}</p>
+                    {isCurrent && <p className="text-xs text-gray-600 mt-1">{step.description}</p>}
+                  </div>
+                );
+              })}
+            </div>
+
+            <div className="flex gap-2 mb-2">
+              {isPaused ? (
+                <button
+                  onClick={resumeJourney}
+                  className="flex-1 py-2.5 bg-indigo-500 hover:bg-indigo-600 text-white rounded-lg font-semibold text-sm"
+                >
+                  Resume
+                </button>
+              ) : (
+                <button
+                  onClick={pauseJourney}
+                  className="flex-1 py-2.5 bg-gray-200 hover:bg-gray-300 text-gray-700 rounded-lg font-semibold text-sm"
+                >
+                  Pause
+                </button>
+              )}
+              <button
+                onClick={() => {
+                  if (window.confirm('Leave this journey? Your progress will be lost.')) {
+                    leaveJourney();
+                  }
+                }}
+                className="flex-1 py-2.5 bg-red-50 hover:bg-red-100 text-red-600 rounded-lg font-semibold text-sm"
+              >
+                Leave journey
+              </button>
+            </div>
+
+            <button
+              onClick={() => setShowJourneyDetail(false)}
+              className="w-full text-center text-sm text-gray-500 hover:text-gray-700 mt-1"
+            >
+              Close
+            </button>
+          </div>
+        </div>
+      );
+    };
+
+    // ============================================================
+    // Render: Journey Browser Modal (see all available journeys)
+    // ============================================================
+    const JourneyBrowserModal = () => {
+      if (!showJourneyBrowser) return null;
+      return (
+        <div className="fixed inset-0 bg-black bg-opacity-50 z-50 flex items-end justify-center p-4">
+          <div className="bg-white rounded-t-2xl w-full max-w-md p-6 pb-8 max-h-[85vh] overflow-y-auto">
+            <h3 className="font-bold text-gray-800 text-lg mb-1">Discovery Journeys</h3>
+            <p className="text-sm text-gray-600 mb-4">Guided, multi-step paths through a topic — unlocked as you build activity in a category, or start one anytime here.</p>
+
+            <div className="space-y-3 mb-4">
+              {journeyDefs.map(j => (
+                <div key={j.id} className="p-4 border border-gray-200 rounded-lg">
+                  <div className="flex items-center gap-2 mb-1">
+                    <span className="text-xl">{j.icon_emoji}</span>
+                    <p className="font-semibold text-gray-800">{j.title}</p>
+                  </div>
+                  <p className="text-sm text-gray-600 mb-3">{j.description}</p>
+                  <button
+                    onClick={() => startJourney(j)}
+                    disabled={!!activeJourney}
+                    className={`w-full py-2 rounded-lg font-semibold text-sm ${
+                      activeJourney ? 'bg-gray-100 text-gray-400 cursor-not-allowed' : 'bg-indigo-500 hover:bg-indigo-600 text-white'
+                    }`}
+                  >
+                    {activeJourney ? 'Finish current journey first' : 'Start journey'}
+                  </button>
+                </div>
+              ))}
+              {journeyDefs.length === 0 && (
+                <p className="text-sm text-gray-500 text-center py-4">No journeys available yet — check back soon.</p>
+              )}
+            </div>
+
+            <button
+              onClick={() => setShowJourneyBrowser(false)}
+              className="w-full text-center text-sm text-gray-500 hover:text-gray-700"
+            >
+              Close
+            </button>
+          </div>
+        </div>
+      );
+    };
+
+    // ============================================================
     // Render: Onboarding Flow
     // ============================================================
     const onboardingSteps = [
@@ -4201,6 +4691,9 @@ export default function BeatTheBet() {
               </div>
             )}
 
+            {/* Journey offer banner */}
+            <JourneyOfferBanner />
+
             {/* Daily challenge cards */}
             {!dailySet || (!quickWin && !personalMatch && !somethingDifferent) ? (
               <div className="bg-white rounded-xl shadow-md p-6 text-center">
@@ -4212,6 +4705,22 @@ export default function BeatTheBet() {
                 {personalMatch && <ChallengeCard challengeId={dailySet.personal_match_challenge_id} slotType="personal_match" />}
                 {somethingDifferent && <ChallengeCard challengeId={dailySet.different_challenge_id} slotType="something_different" />}
               </>
+            )}
+
+            {/* Active Discovery Journey (4th card) */}
+            <JourneyCard />
+
+            {/* Browse journeys entry point */}
+            {!activeJourney && (
+              <button
+                onClick={() => setShowJourneyBrowser(true)}
+                className="w-full bg-white rounded-xl shadow-md p-4 flex items-center justify-between hover:bg-gray-50 transition-colors"
+              >
+                <span className="flex items-center gap-2 text-sm font-semibold text-gray-700">
+                  <span className="text-lg">🧭</span> Browse Discovery Journeys
+                </span>
+                <ChevronRight className="w-5 h-5 text-gray-400" />
+              </button>
             )}
 
             {/* Pillar activity summary */}
@@ -4235,6 +4744,8 @@ export default function BeatTheBet() {
         </div>
 
         <FeedbackModal />
+        <JourneyDetailModal />
+        <JourneyBrowserModal />
       </div>
     );
   };
