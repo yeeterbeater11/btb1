@@ -11285,7 +11285,7 @@ Keep going! Every day counts. 💪
     };
 
     if (loading) {
-      return <LoadingScreen message="Setting up your profile..." />;
+      return LoadingScreen({ message: "Setting up your profile..." });
     }
 
     return (
@@ -11364,7 +11364,7 @@ Keep going! Every day counts. 💪
     };
 
     if (loading) {
-      return <LoadingScreen message="Sending reset link..." />;
+      return LoadingScreen({ message: "Sending reset link..." });
     }
 
     if (sent) {
@@ -11505,7 +11505,7 @@ Keep going! Every day counts. 💪
     };
 
     if (loading) {
-      return <LoadingScreen message="Updating password..." />;
+      return LoadingScreen({ message: "Updating password..." });
     }
 
     if (success) {
@@ -11630,11 +11630,11 @@ Keep going! Every day counts. 💪
       {!hasCompletedOnboarding && <OnboardingFlow />}
       
       {activeTab === 'home' && <HomeTab />}
-      {activeTab === 'resources' && <ResourcesTab />}
+      {activeTab === 'resources' && ResourcesTab()}
       {activeTab === 'profile' && <ProfileTab />}
-      {activeTab === 'info' && <InfoTab />}
+      {activeTab === 'info' && InfoTab()}
       
-      {showResetModal && <ResetModal />}
+      {showResetModal && ResetModal()}
       {showPanicModal && <PanicModal />}
 
       {/* Success Toast */}
