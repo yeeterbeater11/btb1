@@ -3502,10 +3502,9 @@ export default function BeatTheBet() {
         setJourneySteps(journeyStepData);
         setSavedChallengeIds(savedData.map(s => s.challenge_id));
 
-        // Seed starter journeys if none exist yet (idempotent, safe to call every load)
-        if (journeyDefData.length === 0) {
-          await seedStarterJourneys(headers);
-        }
+        // Note: starter journeys are seeded once via SQL (not client-side), since
+        // inserting into challenge_journeys is correctly restricted by RLS to
+        // admin/service-role access — regular user sessions can only read them.
 
         // Determine active/paused journey (most recently updated non-abandoned, non-completed one first)
         const liveJourney = userJourneyData.find(j => j.status === 'active' || j.status === 'paused');
@@ -3954,76 +3953,6 @@ export default function BeatTheBet() {
         showError('Could not update saved challenges. Please try again.');
       }
       setSavingChallengeId(null);
-    };
-
-    // ============================================================
-    // Discovery Journeys: seeding
-    // ============================================================
-    const seedStarterJourneys = async (headers) => {
-      try {
-        const musicJourney = {
-          journey_key: 'music_discovery_starter',
-          title: 'Discover Your New Favourite Sound',
-          description: 'A guided journey through new genres, artists, and ways to experience music — a fresh source of everyday joy.',
-          primary_pillar: 'Music',
-          category: 'Music',
-          active: true,
-          eligibility_rules: { min_total_completions: 5, min_category_completions: 3, category: 'Music' }
-        };
-        const mindfulnessJourney = {
-          journey_key: 'mindfulness_starter',
-          title: 'Building a Calmer Mind',
-          description: 'A step-by-step path through simple mindfulness practices, building from a quick check-in into a habit that sticks.',
-          primary_pillar: 'Mindfulness',
-          category: 'Mindfulness / Reflection',
-          active: true,
-          eligibility_rules: { min_total_completions: 5, min_category_completions: 3, category: 'Mindfulness / Reflection' }
-        };
-
-        const journeyRes = await fetch(`${SUPABASE_URL_LOCAL}/rest/v1/challenge_journeys`, {
-          method: 'POST',
-          headers: { ...headers, 'Prefer': 'return=representation' },
-          body: JSON.stringify([musicJourney, mindfulnessJourney])
-        });
-        if (!journeyRes.ok) return;
-        const createdJourneys = await journeyRes.json();
-        const music = createdJourneys.find(j => j.journey_key === 'music_discovery_starter');
-        const mind = createdJourneys.find(j => j.journey_key === 'mindfulness_starter');
-
-        // Steps reference real daily_challenges rows via challenge_id — fetch the
-        // Music and Mindfulness / Reflection challenges to build each journey from.
-        const libRes = await fetch(
-          `${SUPABASE_URL_LOCAL}/rest/v1/daily_challenges?category=in.(Music,"Mindfulness / Reflection")&active=eq.true&select=id,title,category`,
-          { headers }
-        );
-        if (!libRes.ok) return;
-        const library = await libRes.json();
-
-        const musicChallenges = library.filter(c => c.category === 'Music');
-        const mindChallenges = library.filter(c => c.category === 'Mindfulness / Reflection');
-
-        const steps = [];
-        if (music) {
-          musicChallenges.forEach((c, i) => {
-            steps.push({ journey_id: music.id, challenge_id: c.id, step_number: i + 1 });
-          });
-        }
-        if (mind) {
-          mindChallenges.forEach((c, i) => {
-            steps.push({ journey_id: mind.id, challenge_id: c.id, step_number: i + 1 });
-          });
-        }
-
-        if (steps.length > 0) {
-          await fetch(`${SUPABASE_URL_LOCAL}/rest/v1/challenge_journey_steps`, {
-            method: 'POST',
-            headers: { ...headers, 'Prefer': 'return=representation' },
-            body: JSON.stringify(steps)
-          });
-        }
-      } catch (e) {
-        console.error('Failed to seed starter journeys:', e);
-      }
     };
 
     // ============================================================
