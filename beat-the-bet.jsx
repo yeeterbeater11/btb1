@@ -4272,19 +4272,32 @@ export default function BeatTheBet() {
       if (!session) return;
       const today = new Date().toISOString().split('T')[0];
 
-      await fetch(`${SUPABASE_URL_LOCAL}/rest/v1/user_challenge_history`, {
-        method: 'POST',
-        headers: { ...headers, 'Prefer': 'resolution=merge-duplicates,return=representation' },
-        body: JSON.stringify({
-          user_id: session.user.id,
-          challenge_id: challengeId,
-          challenge_date: today,
-          slot_type: slotType,
-          status: 'completed',
-          completed_at: new Date().toISOString(),
-          shown_at: new Date().toISOString()
-        })
-      });
+      try {
+        const res = await fetch(`${SUPABASE_URL_LOCAL}/rest/v1/user_challenge_history`, {
+          method: 'POST',
+          headers: { ...headers, 'Prefer': 'return=representation' },
+          body: JSON.stringify({
+            user_id: session.user.id,
+            challenge_id: challengeId,
+            challenge_date: today,
+            slot_type: slotType,
+            status: 'completed',
+            completed_at: new Date().toISOString(),
+            shown_at: new Date().toISOString()
+          })
+        });
+
+        if (!res.ok) {
+          const errText = await res.text().catch(() => '');
+          console.error('markComplete history write failed:', res.status, errText);
+          showError('Could not save that completion. Please try again.');
+          return;
+        }
+      } catch (e) {
+        console.error('markComplete threw:', e);
+        showError('Could not save that completion. Please try again.');
+        return;
+      }
 
       const updatedHistory = [...history, { challenge_id: challengeId, challenge_date: today, status: 'completed', slot_type: slotType, completed_at: new Date().toISOString() }];
       setHistory(updatedHistory);
@@ -4305,8 +4318,8 @@ export default function BeatTheBet() {
       // Re-check whether a variety prompt should now show, given the fresh completion
       evaluateVarietyPrompt(updatedHistory, challenges, varietyDismissals);
 
-      setFeedbackChallenge({ id: challengeId, slotType });
       addPoints(15, 'Completed a daily challenge');
+      setFeedbackChallenge({ id: challengeId, slotType });
     };
 
     const submitFeedback = async (rating, wouldRepeat) => {
