@@ -205,7 +205,8 @@ const supabase = (() => {
 
       upsert: async (row, opts = {}) => {
         try {
-          const res = await fetch(`${SUPABASE_URL}/rest/v1/${table}`, {
+          const conflictParam = opts.onConflict ? `?on_conflict=${opts.onConflict}` : '';
+          const res = await fetch(`${SUPABASE_URL}/rest/v1/${table}${conflictParam}`, {
             method: 'POST',
             headers: {
               ...dbHeaders(),
@@ -3663,7 +3664,7 @@ export default function BeatTheBet() {
       if (!session) return;
 
       try {
-        await fetch(`${SUPABASE_URL_LOCAL}/rest/v1/challenge_preferences`, {
+        const res = await fetch(`${SUPABASE_URL_LOCAL}/rest/v1/challenge_preferences?on_conflict=user_id`, {
           method: 'POST',
           headers: { ...headers, 'Prefer': 'resolution=merge-duplicates,return=representation' },
           body: JSON.stringify({
@@ -3671,6 +3672,10 @@ export default function BeatTheBet() {
             variety_prompt_dismissals: updatedDismissals
           })
         });
+        if (!res.ok) {
+          const errText = await res.text().catch(() => '');
+          console.error('dismissVarietyPrompt save failed:', res.status, errText);
+        }
       } catch (e) {
         console.error('Failed to save variety prompt dismissal:', e);
       }
@@ -3831,7 +3836,7 @@ export default function BeatTheBet() {
       };
 
       try {
-        const res = await fetch(`${SUPABASE_URL_LOCAL}/rest/v1/daily_challenge_sets`, {
+        const res = await fetch(`${SUPABASE_URL_LOCAL}/rest/v1/daily_challenge_sets?on_conflict=user_id,challenge_date`, {
           method: 'POST',
           headers: { ...headers, 'Prefer': 'resolution=merge-duplicates,return=representation' },
           body: JSON.stringify(row)
@@ -3917,20 +3922,32 @@ export default function BeatTheBet() {
         if (!session) { setSavingChallengeId(null); return; }
 
         if (isSaved) {
-          await fetch(`${SUPABASE_URL_LOCAL}/rest/v1/saved_challenges?user_id=eq.${session.user.id}&challenge_id=eq.${challengeId}`, {
+          const res = await fetch(`${SUPABASE_URL_LOCAL}/rest/v1/saved_challenges?user_id=eq.${session.user.id}&challenge_id=eq.${challengeId}`, {
             method: 'DELETE',
             headers
           });
-          setSavedChallengeIds(prev => prev.filter(id => id !== challengeId));
-          showSuccess('Removed from saved.');
+          if (res.ok) {
+            setSavedChallengeIds(prev => prev.filter(id => id !== challengeId));
+            showSuccess('Removed from saved.');
+          } else {
+            const errText = await res.text().catch(() => '');
+            console.error('Unsave failed:', res.status, errText);
+            showError('Could not remove from saved. Please try again.');
+          }
         } else {
-          await fetch(`${SUPABASE_URL_LOCAL}/rest/v1/saved_challenges`, {
+          const res = await fetch(`${SUPABASE_URL_LOCAL}/rest/v1/saved_challenges?on_conflict=user_id,challenge_id`, {
             method: 'POST',
             headers: { ...headers, 'Prefer': 'resolution=merge-duplicates' },
             body: JSON.stringify({ user_id: session.user.id, challenge_id: challengeId })
           });
-          setSavedChallengeIds(prev => [...prev, challengeId]);
-          showSuccess('Saved for later!');
+          if (res.ok) {
+            setSavedChallengeIds(prev => [...prev, challengeId]);
+            showSuccess('Saved for later!');
+          } else {
+            const errText = await res.text().catch(() => '');
+            console.error('Save failed:', res.status, errText);
+            showError('Could not save. Please try again.');
+          }
         }
       } catch (e) {
         console.error('Failed to toggle saved challenge:', e);
@@ -4186,7 +4203,7 @@ export default function BeatTheBet() {
         updated_at: new Date().toISOString()
       };
 
-      const res = await fetch(`${SUPABASE_URL_LOCAL}/rest/v1/challenge_preferences`, {
+      const res = await fetch(`${SUPABASE_URL_LOCAL}/rest/v1/challenge_preferences?on_conflict=user_id`, {
         method: 'POST',
         headers: { ...headers, 'Prefer': 'resolution=merge-duplicates,return=representation' },
         body: JSON.stringify(row)
@@ -4199,6 +4216,10 @@ export default function BeatTheBet() {
         if (completed) {
           await generateDailySet(challenges, saved, history);
         }
+      } else {
+        const errText = await res.text().catch(() => '');
+        console.error('savePreferences failed:', res.status, errText);
+        showError('Could not save your preferences. Please try again.');
       }
     };
 
