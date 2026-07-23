@@ -395,6 +395,7 @@ function AdminPanel({ adminEmails, setAdminEmails, setActiveTool, showSuccess, s
         if (c.userStats) setUserStats(c.userStats);
         if (c.adminEmails) setLocalAdminEmails(c.adminEmails);
         setLoaded(true);
+        setLoadError(''); // cache hit means we have good data - clear any stale error
         return; // Don't fetch again - user can hit Refresh manually
       }
     } catch (e) {}
