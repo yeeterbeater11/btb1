@@ -3378,6 +3378,11 @@ export default function BeatTheBet() {
   const DailyChallengesPageImpl = () => {
     const SUPABASE_URL_LOCAL = 'https://emrpkubjspydnbrittuy.supabase.co';
 
+    React.useEffect(() => {
+      console.log('[DEBUG] DailyChallengesPageImpl MOUNTED');
+      return () => console.log('[DEBUG] DailyChallengesPageImpl UNMOUNTED');
+    }, []);
+
     // State
     const [loading, setLoading] = React.useState(true);
     const [preferences, setPreferences] = React.useState(null);
@@ -4287,6 +4292,7 @@ export default function BeatTheBet() {
         body: JSON.stringify({ feedback_rating: rating, would_repeat: wouldRepeat })
       });
 
+      console.log('[DEBUG] submitFeedback setting feedbackChallenge to null');
       setFeedbackChallenge(null);
     };
 
@@ -4517,7 +4523,7 @@ export default function BeatTheBet() {
             </div>
 
             <button
-              onClick={() => setFeedbackChallenge(null)}
+              onClick={() => { console.log('[DEBUG] Skip feedback button clicked'); setFeedbackChallenge(null); }}
               className="w-full text-center text-sm text-gray-500 hover:text-gray-700"
             >
               Skip feedback
