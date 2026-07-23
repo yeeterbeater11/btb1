@@ -7352,7 +7352,11 @@ export default function BeatTheBet() {
     };
 
     const sendMessage = async () => {
-      if (!newMessage.trim() || !username || sending) return;
+      console.log('[SENDMSG] sendMessage called. newMessage:', JSON.stringify(newMessage), 'username:', JSON.stringify(username), 'sending:', sending);
+      if (!newMessage.trim() || !username || sending) {
+        console.log('[SENDMSG] early return - blocked by guard clause');
+        return;
+      }
 
       const now = Date.now();
       // Classify message
@@ -7740,7 +7744,7 @@ export default function BeatTheBet() {
                 className="flex-1 p-3 border-2 border-gray-300 rounded-xl focus:ring-2 focus:ring-indigo-500 focus:border-transparent disabled:bg-gray-100 text-sm"
               />
               <button
-                onClick={sendMessage}
+                onClick={() => { console.log('[SENDMSG] Send button clicked'); sendMessage(); }}
                 disabled={!newMessage.trim() || !username || sending}
                 className="bg-indigo-500 hover:bg-indigo-600 disabled:bg-gray-300 text-white rounded-xl px-5 py-3 font-bold transition-colors"
               >
