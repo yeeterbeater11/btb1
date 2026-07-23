@@ -7171,6 +7171,7 @@ export default function BeatTheBet() {
         try {
           const session = await supabase.getValidSession();
           const token = session ? session.access_token : SUPABASE_ANON_KEY;
+          console.log('[LOADMSG] fetching for room:', chatRoom, 'has session:', !!session);
           const res = await fetch(
             `${SUPABASE_URL}/rest/v1/messages?room=eq.${encodeURIComponent(chatRoom)}&order=created_at.asc&limit=50`,
             {
@@ -7180,12 +7181,21 @@ export default function BeatTheBet() {
               }
             }
           );
+          console.log('[LOADMSG] response status:', res.status, res.ok);
           if (res.ok) {
             const data = await res.json();
+            console.log('[LOADMSG] raw data received:', data.length, 'messages', data);
             const freshReportedIds = (() => { try { const s = localStorage.getItem('reportedMessageIds'); return s ? JSON.parse(s) : []; } catch(e) { return reportedIdsRef.current; } })();
-            setMessages(data.filter(m => !m.flagged && !freshReportedIds.includes(m.id)));
+            const filtered = data.filter(m => !m.flagged && !freshReportedIds.includes(m.id));
+            console.log('[LOADMSG] after filtering:', filtered.length, 'messages remain');
+            setMessages(filtered);
           } else if (res.status === 401) {
+            const errText = await res.text().catch(() => '');
+            console.log('[LOADMSG] 401 error body:', errText);
             handleExpiredSession(res);
+          } else {
+            const errText = await res.text().catch(() => '');
+            console.log('[LOADMSG] non-ok, non-401 response:', res.status, errText);
           }
         } catch (e) {
           console.warn('Failed to load messages:', e);
