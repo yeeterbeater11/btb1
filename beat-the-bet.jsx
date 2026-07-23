@@ -6879,7 +6879,7 @@ export default function BeatTheBet() {
     );
   };
 
-  const CommunityChatPage = () => {
+  const CommunityChatPageImpl = ({ chatRoom, setChatRoom, username, setUsername, hasSetUsername, setHasSetUsername, level, selectedInterests }) => {
     const [newMessage, setNewMessage] = React.useState('');
     const [showUsernameSetup, setShowUsernameSetup] = React.useState(!hasSetUsername);
     const [tempUsername, setTempUsername] = React.useState('');
@@ -7278,21 +7278,31 @@ export default function BeatTheBet() {
               }
             }
           );
+          console.log('[SAFETYPOLL] response status:', res.status, res.ok);
           if (res.ok) {
             const data = await res.json();
+            console.log('[SAFETYPOLL] raw data received:', data.length, 'messages');
             const freshReportedIds = (() => { try { const s = localStorage.getItem('reportedMessageIds'); return s ? JSON.parse(s) : []; } catch(e) { return reportedIdsRef.current; } })();
             const serverMessages = data.filter(m => !m.flagged && !freshReportedIds.includes(m.id));
+            console.log('[SAFETYPOLL] after filtering:', serverMessages.length, 'messages remain');
             setMessages(prev => {
               const stillPending = prev.filter(m =>
                 typeof m.id === 'string' && m.id.startsWith('temp-') &&
                 !serverMessages.some(sm => sm.username === m.username && sm.message === m.message)
               );
+              console.log('[SAFETYPOLL] setting messages to:', serverMessages.length + stillPending.length, 'total (prev had', prev.length, ')');
               return [...serverMessages, ...stillPending];
             });
           } else if (res.status === 401) {
+            console.log('[SAFETYPOLL] 401, calling handleExpiredSession');
             handleExpiredSession(res);
+          } else {
+            const errText = await res.text().catch(() => '');
+            console.log('[SAFETYPOLL] non-ok response:', res.status, errText);
           }
-        } catch (e) {}
+        } catch (e) {
+          console.log('[SAFETYPOLL] threw exception:', e.message);
+        }
       }, 30000);
 
       unsubscribeRef.current = () => {
@@ -7757,6 +7767,21 @@ export default function BeatTheBet() {
       </div>
     );
   };
+
+  // Stable wrapper: CommunityChatPageImpl reads chatRoom/username/level/etc as
+  // PROPS rather than closure, so unlike DailyChallengesPage this one can't
+  // just be frozen wholesale — those values genuinely change (switching
+  // rooms, setting a username, leveling up) and the component needs to see
+  // the current ones every render. Freezing only the component *reference*
+  // via useRef (not its inputs) gives us both: React never sees a "new"
+  // component type here, so it never remounts and loses messages/scroll
+  // state, but the props passed in below are always this render's live
+  // values, so switching rooms or updating username still works correctly.
+  const CommunityChatPageRef = React.useRef(CommunityChatPageImpl);
+  const CommunityChatPage = () =>
+    React.createElement(CommunityChatPageRef.current, {
+      chatRoom, setChatRoom, username, setUsername, hasSetUsername, setHasSetUsername, level, selectedInterests
+    });
 
   const NearbyPage = () => (
     <div className="flex flex-col min-h-screen bg-gray-50 pb-20">
