@@ -278,7 +278,7 @@ const supabase = (() => {
             const session = localStorage.getItem('sb_session');
             const token = session ? JSON.parse(session).access_token : SUPABASE_ANON_KEY;
             const res = await fetch(
-              `${SUPABASE_URL}/rest/v1/messages?room=eq.${encodeURIComponent(room)}&order=created_at.asc&limit=50`,
+              `${SUPABASE_URL}/rest/v1/messages?room=eq.${encodeURIComponent(room)}&order=created_at.desc&limit=50`,
               {
                 headers: {
                   'apikey': SUPABASE_ANON_KEY,
@@ -7171,9 +7171,8 @@ export default function BeatTheBet() {
         try {
           const session = await supabase.getValidSession();
           const token = session ? session.access_token : SUPABASE_ANON_KEY;
-          console.log('[LOADMSG] fetching for room:', chatRoom, 'has session:', !!session);
           const res = await fetch(
-            `${SUPABASE_URL}/rest/v1/messages?room=eq.${encodeURIComponent(chatRoom)}&order=created_at.asc&limit=50`,
+            `${SUPABASE_URL}/rest/v1/messages?room=eq.${encodeURIComponent(chatRoom)}&order=created_at.desc&limit=50`,
             {
               headers: {
                 'apikey': SUPABASE_ANON_KEY,
@@ -7181,21 +7180,13 @@ export default function BeatTheBet() {
               }
             }
           );
-          console.log('[LOADMSG] response status:', res.status, res.ok);
           if (res.ok) {
             const data = await res.json();
-            console.log('[LOADMSG] raw data received:', data.length, 'messages', data);
             const freshReportedIds = (() => { try { const s = localStorage.getItem('reportedMessageIds'); return s ? JSON.parse(s) : []; } catch(e) { return reportedIdsRef.current; } })();
             const filtered = data.filter(m => !m.flagged && !freshReportedIds.includes(m.id));
-            console.log('[LOADMSG] after filtering:', filtered.length, 'messages remain');
-            setMessages(filtered);
+            setMessages(filtered.reverse());
           } else if (res.status === 401) {
-            const errText = await res.text().catch(() => '');
-            console.log('[LOADMSG] 401 error body:', errText);
             handleExpiredSession(res);
-          } else {
-            const errText = await res.text().catch(() => '');
-            console.log('[LOADMSG] non-ok, non-401 response:', res.status, errText);
           }
         } catch (e) {
           console.warn('Failed to load messages:', e);
@@ -7223,7 +7214,6 @@ export default function BeatTheBet() {
           'postgres_changes',
           { event: 'INSERT', schema: 'public', table: 'messages', filter: `room=eq.${chatRoom}` },
           (payload) => {
-            console.log('[REALTIME] INSERT event received:', payload.new);
             const incoming = payload.new;
             const freshReportedIds = (() => { try { const s = localStorage.getItem('reportedMessageIds'); return s ? JSON.parse(s) : []; } catch (e) { return reportedIdsRef.current; } })();
             if (incoming.flagged || freshReportedIds.includes(incoming.id)) return;
@@ -7256,9 +7246,7 @@ export default function BeatTheBet() {
             });
           }
         )
-        .subscribe((status, err) => {
-          console.log('[REALTIME] subscription status:', status, err || '');
-        });
+        .subscribe();
 
       // Safety-net poll: realtime should handle everything above, but
       // connections can occasionally drop silently (backgrounded tabs,
@@ -7270,7 +7258,7 @@ export default function BeatTheBet() {
           const session = await supabase.getValidSession();
           const token = session ? session.access_token : SUPABASE_ANON_KEY;
           const res = await fetch(
-            `${SUPABASE_URL}/rest/v1/messages?room=eq.${encodeURIComponent(chatRoom)}&order=created_at.asc&limit=50`,
+            `${SUPABASE_URL}/rest/v1/messages?room=eq.${encodeURIComponent(chatRoom)}&order=created_at.desc&limit=50`,
             {
               headers: {
                 'apikey': SUPABASE_ANON_KEY,
@@ -7278,31 +7266,21 @@ export default function BeatTheBet() {
               }
             }
           );
-          console.log('[SAFETYPOLL] response status:', res.status, res.ok);
           if (res.ok) {
             const data = await res.json();
-            console.log('[SAFETYPOLL] raw data received:', data.length, 'messages');
             const freshReportedIds = (() => { try { const s = localStorage.getItem('reportedMessageIds'); return s ? JSON.parse(s) : []; } catch(e) { return reportedIdsRef.current; } })();
-            const serverMessages = data.filter(m => !m.flagged && !freshReportedIds.includes(m.id));
-            console.log('[SAFETYPOLL] after filtering:', serverMessages.length, 'messages remain');
+            const serverMessages = data.filter(m => !m.flagged && !freshReportedIds.includes(m.id)).reverse();
             setMessages(prev => {
               const stillPending = prev.filter(m =>
                 typeof m.id === 'string' && m.id.startsWith('temp-') &&
                 !serverMessages.some(sm => sm.username === m.username && sm.message === m.message)
               );
-              console.log('[SAFETYPOLL] setting messages to:', serverMessages.length + stillPending.length, 'total (prev had', prev.length, ')');
               return [...serverMessages, ...stillPending];
             });
           } else if (res.status === 401) {
-            console.log('[SAFETYPOLL] 401, calling handleExpiredSession');
             handleExpiredSession(res);
-          } else {
-            const errText = await res.text().catch(() => '');
-            console.log('[SAFETYPOLL] non-ok response:', res.status, errText);
           }
-        } catch (e) {
-          console.log('[SAFETYPOLL] threw exception:', e.message);
-        }
+        } catch (e) {}
       }, 30000);
 
       unsubscribeRef.current = () => {
