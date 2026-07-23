@@ -7352,23 +7352,15 @@ export default function BeatTheBet() {
     };
 
     const sendMessage = async () => {
-      console.log('[SENDMSG] sendMessage called. newMessage:', JSON.stringify(newMessage), 'username:', JSON.stringify(username), 'sending:', sending);
-      if (!newMessage.trim() || !username || sending) {
-        console.log('[SENDMSG] early return - blocked by guard clause');
-        return;
-      }
+      if (!newMessage.trim() || !username || sending) return;
 
       const now = Date.now();
-      // Classify message
       const classification = classifyMessage(newMessage.trim(), chatRoom);
 
-      // Block: critical promo/scam/financial — don't send at all
       if (classification.action === 'hide') {
         showError(classification.reason);
         return;
       }
-
-      // Redirect: gambling talk in hobby chat
       if (classification.action === 'redirect') {
         showError(classification.reason);
         return;
@@ -7377,68 +7369,106 @@ export default function BeatTheBet() {
       setSending(true);
       setLastSentAt(now);
 
-      const session = await supabase.getValidSession();
+      const messageText = newMessage.trim();
+      const optimisticMsg = {
+        id: `temp-${now}`,
+        username,
+        message: messageText,
+        room: chatRoom,
+        created_at: new Date().toISOString(),
+        isOwn: true,
+        flagged: false
+      };
+      setMessages(prev => [...prev, optimisticMsg]);
+      setNewMessage('');
+      setTimeout(() => chatInputRef.current?.focus(), 0);
 
-      // If no session, user needs to re-login
+      // Wrap every async step with a hard timeout so a hung/silent promise
+      // (a stalled getValidSession, a fetch that never settles, etc.) can
+      // never leave this function stuck forever with no error and no
+      // indication anything is wrong — it will always either succeed or
+      // fail visibly within a few seconds.
+      const withTimeout = (promise, ms, label) =>
+        Promise.race([
+          promise,
+          new Promise((_, reject) => setTimeout(() => reject(new Error(`${label} timed out after ${ms}ms`)), ms))
+        ]);
+
+      let session;
+      try {
+        session = await withTimeout(supabase.getValidSession(), 8000, 'getValidSession');
+      } catch (e) {
+        console.error('[SENDMSG] getValidSession failed/timed out:', e.message);
+        setMessages(prev => prev.filter(m => m.id !== optimisticMsg.id));
+        showError('Could not verify your session. Please try again.');
+        setSending(false);
+        return;
+      }
+
       if (!session) {
+        setMessages(prev => prev.filter(m => m.id !== optimisticMsg.id));
         showError('Your session has expired. Please log out and log back in.');
         setSending(false);
         return;
       }
 
-      const optimisticMsg = {
-        id: `temp-${now}`,
-        username,
-        message: newMessage.trim(),
-        room: chatRoom,
-        created_at: new Date().toISOString(),
-        isOwn: true,
-        user_id: session?.user?.id
-      };
-
-      setMessages(prev => [...prev, optimisticMsg]);
-      setNewMessage('');
-      setTimeout(() => chatInputRef.current?.focus(), 0);
-
       try {
-        const token = session ? session.access_token : SUPABASE_ANON_KEY;
-        const res = await fetch(`${SUPABASE_URL}/rest/v1/messages`, {
-          method: 'POST',
-          headers: {
-            'apikey': SUPABASE_ANON_KEY,
-            'Authorization': `Bearer ${token}`,
-            'Content-Type': 'application/json',
-            'Prefer': 'return=representation'
-          },
-          body: JSON.stringify({
-            user_id: session?.user?.id || null,
-            username,
-            message: newMessage.trim(),
-            room: chatRoom,
-            flagged: classification.action === 'flag' || classification.isCrisis || false,
-            moderation_level: classification.level || null,
-            moderation_reason: classification.reason || null,
-            moderation_matched: classification.matched || null,
-            moderation_score: classification.score || null,
-            reviewed: false
-          })
-        });
+        const token = session.access_token;
+        const res = await withTimeout(
+          fetch(`${SUPABASE_URL}/rest/v1/messages`, {
+            method: 'POST',
+            headers: {
+              'apikey': SUPABASE_ANON_KEY,
+              'Authorization': `Bearer ${token}`,
+              'Content-Type': 'application/json',
+              'Prefer': 'return=representation'
+            },
+            body: JSON.stringify({
+              user_id: session.user?.id || null,
+              username,
+              message: messageText,
+              room: chatRoom,
+              flagged: classification.action === 'flag' || classification.isCrisis || false,
+              moderation_level: classification.level || null,
+              moderation_reason: classification.reason || null,
+              moderation_matched: classification.matched || null,
+              moderation_score: classification.score || null,
+              reviewed: false
+            })
+          }),
+          8000,
+          'send message request'
+        );
 
         if (!res.ok) {
           if (handleExpiredSession(res)) {
             setMessages(prev => prev.filter(m => m.id !== optimisticMsg.id));
+            setSending(false);
             return;
           }
           const errData = await res.json().catch(() => ({}));
           const errMsg = errData.message || errData.error || `Error ${res.status}`;
+          console.error('[SENDMSG] Send failed:', res.status, errData);
           setMessages(prev => prev.filter(m => m.id !== optimisticMsg.id));
           showError(`Could not send: ${errMsg}`);
-          console.error('Send failed:', res.status, errData);
+          setSending(false);
+          return;
+        }
+
+        // Success: replace the optimistic placeholder with the real saved
+        // row immediately, using the response body directly — don't wait
+        // on realtime or the safety poll to reconcile it, so a message you
+        // just sent is never left as an unconfirmed placeholder that can't
+        // be deleted or reported.
+        const savedRows = await res.json().catch(() => []);
+        const savedMsg = Array.isArray(savedRows) && savedRows[0] ? savedRows[0] : null;
+        if (savedMsg) {
+          setMessages(prev => prev.map(m => (m.id === optimisticMsg.id ? savedMsg : m)));
         }
       } catch (e) {
+        console.error('[SENDMSG] Send error:', e.message);
         setMessages(prev => prev.filter(m => m.id !== optimisticMsg.id));
         showError(`Could not send: ${e.message}`);
-        console.error('Send error:', e);
       }
 
       setSending(false);
@@ -7744,7 +7774,7 @@ export default function BeatTheBet() {
                 className="flex-1 p-3 border-2 border-gray-300 rounded-xl focus:ring-2 focus:ring-indigo-500 focus:border-transparent disabled:bg-gray-100 text-sm"
               />
               <button
-                onClick={() => { console.log('[SENDMSG] Send button clicked'); sendMessage(); }}
+                onClick={sendMessage}
                 disabled={!newMessage.trim() || !username || sending}
                 className="bg-indigo-500 hover:bg-indigo-600 disabled:bg-gray-300 text-white rounded-xl px-5 py-3 font-bold transition-colors"
               >
