@@ -28,6 +28,22 @@
   <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
   <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
   <script src="https://unpkg.com/lucide@latest/dist/umd/lucide.min.js"></script>
+  <!-- Supabase JS client, used only for realtime chat subscriptions. Exposed as
+       window.supabase by the CDN build; renamed to window.supabaseRealtimeClient
+       immediately below so it doesn't collide with the app's own hand-rolled
+       `supabase` REST wrapper defined inside beat-the-bet.jsx. -->
+  <script src="https://unpkg.com/@supabase/supabase-js@2"></script>
+  <script>
+    window.supabaseRealtimeClient = window.supabase.createClient(
+      'https://emrpkubjspydnbrittuy.supabase.co',
+      'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImVtcnBrdWJqc3B5ZG5icml0dHV5Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3Nzk2NTE1MjQsImV4cCI6MjA5NTIyNzUyNH0.wyrwYfXyOZgdS3NnK7z-kTU-KwbfOH_TF1vv6CsNCmI'
+    );
+    // The CDN build assigns its client factory to window.supabase, which the
+    // app's own script (beat-the-bet.jsx) later overwrites with its own
+    // hand-rolled `const supabase = ...` REST wrapper. That's expected and
+    // fine — the real Supabase client stays accessible via
+    // window.supabaseRealtimeClient regardless of what happens to window.supabase.
+  </script>
 
   <script>
     // Recharts stub - prevents oneOfType crash

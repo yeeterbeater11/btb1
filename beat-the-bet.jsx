@@ -7200,8 +7200,59 @@ export default function BeatTheBet() {
 
       loadMessages();
 
-      // Poll for new messages every 4 seconds
-      const interval = setInterval(async () => {
+      // ============================================================
+      // Realtime subscription: Supabase pushes new/changed messages to us
+      // the instant they happen in the database, instead of us repeatedly
+      // asking "what's new?" every few seconds. This is what makes the
+      // chat feel instant and avoids ever replacing the whole message list
+      // out from under someone who just sent something.
+      // ============================================================
+      const channel = window.supabaseRealtimeClient
+        .channel(`messages-room-${chatRoom}`)
+        .on(
+          'postgres_changes',
+          { event: 'INSERT', schema: 'public', table: 'messages', filter: `room=eq.${chatRoom}` },
+          (payload) => {
+            const incoming = payload.new;
+            const freshReportedIds = (() => { try { const s = localStorage.getItem('reportedMessageIds'); return s ? JSON.parse(s) : []; } catch (e) { return reportedIdsRef.current; } })();
+            if (incoming.flagged || freshReportedIds.includes(incoming.id)) return;
+
+            setMessages(prev => {
+              // Drop the matching optimistic placeholder (temp id) once the
+              // real row arrives, and avoid double-adding if we already have it
+              // (e.g. this client's own message, or a duplicate event).
+              const withoutOptimisticDupe = prev.filter(m =>
+                !(typeof m.id === 'string' && m.id.startsWith('temp-') && m.username === incoming.username && m.message === incoming.message)
+              );
+              if (withoutOptimisticDupe.some(m => m.id === incoming.id)) return withoutOptimisticDupe;
+              return [...withoutOptimisticDupe, incoming];
+            });
+          }
+        )
+        .on(
+          'postgres_changes',
+          { event: 'UPDATE', schema: 'public', table: 'messages', filter: `room=eq.${chatRoom}` },
+          (payload) => {
+            const updated = payload.new;
+            const freshReportedIds = (() => { try { const s = localStorage.getItem('reportedMessageIds'); return s ? JSON.parse(s) : []; } catch (e) { return reportedIdsRef.current; } })();
+            setMessages(prev => {
+              // A message getting flagged (e.g. someone reported it) should
+              // disappear from view; otherwise just refresh its fields in place.
+              if (updated.flagged || freshReportedIds.includes(updated.id)) {
+                return prev.filter(m => m.id !== updated.id);
+              }
+              return prev.map(m => (m.id === updated.id ? updated : m));
+            });
+          }
+        )
+        .subscribe();
+
+      // Safety-net poll: realtime should handle everything above, but
+      // connections can occasionally drop silently (backgrounded tabs,
+      // network changes). This runs far less often than the old 4s poll and
+      // exists purely so the chat can self-heal instead of going silently
+      // stale if that happens.
+      const safetyInterval = setInterval(async () => {
         try {
           const session = await supabase.getValidSession();
           const token = session ? session.access_token : SUPABASE_ANON_KEY;
@@ -7217,16 +7268,28 @@ export default function BeatTheBet() {
           if (res.ok) {
             const data = await res.json();
             const freshReportedIds = (() => { try { const s = localStorage.getItem('reportedMessageIds'); return s ? JSON.parse(s) : []; } catch(e) { return reportedIdsRef.current; } })();
-            setMessages(data.filter(m => !m.flagged && !freshReportedIds.includes(m.id)));
+            const serverMessages = data.filter(m => !m.flagged && !freshReportedIds.includes(m.id));
+            setMessages(prev => {
+              const stillPending = prev.filter(m =>
+                typeof m.id === 'string' && m.id.startsWith('temp-') &&
+                !serverMessages.some(sm => sm.username === m.username && sm.message === m.message)
+              );
+              return [...serverMessages, ...stillPending];
+            });
           } else if (res.status === 401) {
-            clearInterval(interval);
             handleExpiredSession(res);
           }
         } catch (e) {}
-      }, 4000);
+      }, 30000);
 
-      unsubscribeRef.current = () => clearInterval(interval);
-      return () => clearInterval(interval);
+      unsubscribeRef.current = () => {
+        window.supabaseRealtimeClient.removeChannel(channel);
+        clearInterval(safetyInterval);
+      };
+      return () => {
+        window.supabaseRealtimeClient.removeChannel(channel);
+        clearInterval(safetyInterval);
+      };
     }, [chatRoom]);
 
     // Scroll to bottom only when a genuinely new message arrives (not on
