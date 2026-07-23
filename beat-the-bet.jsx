@@ -4228,26 +4228,33 @@ export default function BeatTheBet() {
         return;
       }
 
-      const updatedHistory = [...history, { challenge_id: challengeId, challenge_date: today, status: 'completed', slot_type: slotType, completed_at: new Date().toISOString() }];
-      setHistory(updatedHistory);
+      try {
+        const updatedHistory = [...history, { challenge_id: challengeId, challenge_date: today, status: 'completed', slot_type: slotType, completed_at: new Date().toISOString() }];
+        setHistory(updatedHistory);
 
-      // Update pillar stats
-      const chall = challenges.find(c => c.id === challengeId);
-      if (chall) {
-        setPillarStats(prev => {
-          const updated = { ...prev };
-          updated[chall.primary_pillar] = (updated[chall.primary_pillar] || 0) + 1;
-          (chall.secondary_pillars || []).forEach(p => {
-            updated[p] = (updated[p] || 0) + 0.5;
+        // Update pillar stats
+        const chall = challenges.find(c => c.id === challengeId);
+        if (chall) {
+          setPillarStats(prev => {
+            const updated = { ...prev };
+            updated[chall.primary_pillar] = (updated[chall.primary_pillar] || 0) + 1;
+            (chall.secondary_pillars || []).forEach(p => {
+              updated[p] = (updated[p] || 0) + 0.5;
+            });
+            return updated;
           });
-          return updated;
-        });
+        }
+
+        // Re-check whether a variety prompt should now show, given the fresh completion
+        evaluateVarietyPrompt(updatedHistory, challenges, varietyDismissals);
+
+        addPoints(15, 'Completed a daily challenge');
+      } catch (e) {
+        // Even if something here goes wrong, the completion write already succeeded —
+        // don't let a UI-side bug prevent the feedback modal from showing.
+        console.error('markComplete post-write step failed (non-fatal):', e);
       }
 
-      // Re-check whether a variety prompt should now show, given the fresh completion
-      evaluateVarietyPrompt(updatedHistory, challenges, varietyDismissals);
-
-      addPoints(15, 'Completed a daily challenge');
       setFeedbackChallenge({ id: challengeId, slotType });
     };
 
