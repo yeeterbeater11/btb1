@@ -7213,6 +7213,7 @@ export default function BeatTheBet() {
           'postgres_changes',
           { event: 'INSERT', schema: 'public', table: 'messages', filter: `room=eq.${chatRoom}` },
           (payload) => {
+            console.log('[REALTIME] INSERT event received:', payload.new);
             const incoming = payload.new;
             const freshReportedIds = (() => { try { const s = localStorage.getItem('reportedMessageIds'); return s ? JSON.parse(s) : []; } catch (e) { return reportedIdsRef.current; } })();
             if (incoming.flagged || freshReportedIds.includes(incoming.id)) return;
@@ -7245,7 +7246,9 @@ export default function BeatTheBet() {
             });
           }
         )
-        .subscribe();
+        .subscribe((status, err) => {
+          console.log('[REALTIME] subscription status:', status, err || '');
+        });
 
       // Safety-net poll: realtime should handle everything above, but
       // connections can occasionally drop silently (backgrounded tabs,
