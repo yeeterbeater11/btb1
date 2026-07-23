@@ -453,7 +453,7 @@ function AdminPanel({ adminEmails, setAdminEmails, setActiveTool, showSuccess, s
         }));
       } catch (e) {}
 
-      if (!critRes.ok && !highRes.ok) {
+      if (!flaggedRes.ok && !suppRes.ok) {
         setLoadError('Could not load messages. Make sure admin_fix.sql has been run.');
       }
     } catch (e) {
@@ -3378,11 +3378,6 @@ export default function BeatTheBet() {
   const DailyChallengesPageImpl = () => {
     const SUPABASE_URL_LOCAL = 'https://emrpkubjspydnbrittuy.supabase.co';
 
-    React.useEffect(() => {
-      console.log('[DEBUG] DailyChallengesPageImpl MOUNTED');
-      return () => console.log('[DEBUG] DailyChallengesPageImpl UNMOUNTED');
-    }, []);
-
     // State
     const [loading, setLoading] = React.useState(true);
     const [preferences, setPreferences] = React.useState(null);
@@ -4207,14 +4202,12 @@ export default function BeatTheBet() {
     // Challenge Actions
     // ============================================================
     const markComplete = async (challengeId, slotType) => {
-      console.log('[DEBUG] markComplete called', challengeId, slotType);
       const headers = await getHeaders();
       const session = await supabase.getValidSession();
-      if (!session) { console.log('[DEBUG] no session, aborting'); return; }
+      if (!session) return;
       const today = new Date().toISOString().split('T')[0];
 
       try {
-        console.log('[DEBUG] posting to user_challenge_history...');
         const res = await fetch(`${SUPABASE_URL_LOCAL}/rest/v1/user_challenge_history`, {
           method: 'POST',
           headers: { ...headers, 'Prefer': 'return=representation' },
@@ -4228,7 +4221,6 @@ export default function BeatTheBet() {
             shown_at: new Date().toISOString()
           })
         });
-        console.log('[DEBUG] history post response:', res.status, res.ok);
 
         if (!res.ok) {
           const errText = await res.text().catch(() => '');
@@ -4267,16 +4259,8 @@ export default function BeatTheBet() {
         console.error('markComplete post-write step failed (non-fatal):', e);
       }
 
-      console.log('[DEBUG] about to call setFeedbackChallenge with', challengeId, slotType);
       setFeedbackChallenge({ id: challengeId, slotType });
-      console.log('[DEBUG] setFeedbackChallenge called');
-
-      // The real fix for the remount issue is DailyChallengesPage now having a
-      // stable component identity (see DailyChallengesPageRef below). Deferring
-      // addPoints slightly is kept here as a harmless extra safeguard.
-      setTimeout(() => {
-        addPoints(15, 'Completed a daily challenge');
-      }, 0);
+      addPoints(15, 'Completed a daily challenge');
     };
 
     const submitFeedback = async (rating, wouldRepeat) => {
@@ -4292,7 +4276,6 @@ export default function BeatTheBet() {
         body: JSON.stringify({ feedback_rating: rating, would_repeat: wouldRepeat })
       });
 
-      console.log('[DEBUG] submitFeedback setting feedbackChallenge to null');
       setFeedbackChallenge(null);
     };
 
@@ -4494,10 +4477,8 @@ export default function BeatTheBet() {
     // Render: Feedback Modal
     // ============================================================
     const FeedbackModal = () => {
-      console.log('[DEBUG] FeedbackModal render, feedbackChallenge =', feedbackChallenge);
       if (!feedbackChallenge) return null;
       const challenge = getChallengeById(feedbackChallenge.id);
-      console.log('[DEBUG] FeedbackModal rendering visible modal for challenge', challenge);
 
       return (
         <div className="fixed inset-0 bg-black bg-opacity-50 z-50 flex items-end justify-center p-4">
@@ -4523,7 +4504,7 @@ export default function BeatTheBet() {
             </div>
 
             <button
-              onClick={() => { console.log('[DEBUG] Skip feedback button clicked'); setFeedbackChallenge(null); }}
+              onClick={() => setFeedbackChallenge(null)}
               className="w-full text-center text-sm text-gray-500 hover:text-gray-700"
             >
               Skip feedback
