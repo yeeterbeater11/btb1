@@ -3369,7 +3369,13 @@ export default function BeatTheBet() {
   // ============================================================
   // DAILY CHALLENGES SYSTEM
   // ============================================================
-  const DailyChallengesPage = () => {
+  // DailyChallengesPage is stabilized via useRef below so its component
+  // identity never changes across BeatTheBet re-renders. Without this,
+  // any parent-level state change (e.g. addPoints updating points/level)
+  // would give React a "new" component on the next render and force a
+  // full remount, silently wiping this component's local state (like
+  // the feedback modal's open/closed state) back to its initial values.
+  const DailyChallengesPageImpl = () => {
     const SUPABASE_URL_LOCAL = 'https://emrpkubjspydnbrittuy.supabase.co';
 
     // State
@@ -4250,8 +4256,6 @@ export default function BeatTheBet() {
 
         // Re-check whether a variety prompt should now show, given the fresh completion
         evaluateVarietyPrompt(updatedHistory, challenges, varietyDismissals);
-
-        addPoints(15, 'Completed a daily challenge');
       } catch (e) {
         // Even if something here goes wrong, the completion write already succeeded —
         // don't let a UI-side bug prevent the feedback modal from showing.
@@ -4261,6 +4265,13 @@ export default function BeatTheBet() {
       console.log('[DEBUG] about to call setFeedbackChallenge with', challengeId, slotType);
       setFeedbackChallenge({ id: challengeId, slotType });
       console.log('[DEBUG] setFeedbackChallenge called');
+
+      // The real fix for the remount issue is DailyChallengesPage now having a
+      // stable component identity (see DailyChallengesPageRef below). Deferring
+      // addPoints slightly is kept here as a harmless extra safeguard.
+      setTimeout(() => {
+        addPoints(15, 'Completed a daily challenge');
+      }, 0);
     };
 
     const submitFeedback = async (rating, wouldRepeat) => {
@@ -5195,6 +5206,14 @@ export default function BeatTheBet() {
       </div>
     );
   };
+
+  // Stable wrapper: DailyChallengesPageRef.current holds the ONE instance of
+  // the component function, created once on first render and never replaced.
+  // JSX below renders DailyChallengesPageRef.current (always the same
+  // reference), not DailyChallengesPageImpl directly (a new reference every
+  // render) — this is what actually prevents the remount-on-parent-render bug.
+  const DailyChallengesPageRef = React.useRef(DailyChallengesPageImpl);
+  const DailyChallengesPage = DailyChallengesPageRef.current;
 
   const MoneySavedPage = () => (
     <div className="flex flex-col min-h-screen bg-gray-50 pb-20">
