@@ -7209,19 +7209,17 @@ export default function BeatTheBet() {
       // out from under someone who just sent something.
       // ============================================================
       const channel = window.supabaseRealtimeClient
-        .channel(`messages-room-${chatRoom}`)
+        .channel(`messages-room-${chatRoom}-${Date.now()}`)
         .on(
           'postgres_changes',
-          { event: 'INSERT', schema: 'public', table: 'messages', filter: `room=eq.${chatRoom}` },
+          { event: 'INSERT', schema: 'public', table: 'messages' },
           (payload) => {
             const incoming = payload.new;
+            if (incoming.room !== chatRoom) return;
             const freshReportedIds = (() => { try { const s = localStorage.getItem('reportedMessageIds'); return s ? JSON.parse(s) : []; } catch (e) { return reportedIdsRef.current; } })();
             if (incoming.flagged || freshReportedIds.includes(incoming.id)) return;
 
             setMessages(prev => {
-              // Drop the matching optimistic placeholder (temp id) once the
-              // real row arrives, and avoid double-adding if we already have it
-              // (e.g. this client's own message, or a duplicate event).
               const withoutOptimisticDupe = prev.filter(m =>
                 !(typeof m.id === 'string' && m.id.startsWith('temp-') && m.username === incoming.username && m.message === incoming.message)
               );
@@ -7232,13 +7230,12 @@ export default function BeatTheBet() {
         )
         .on(
           'postgres_changes',
-          { event: 'UPDATE', schema: 'public', table: 'messages', filter: `room=eq.${chatRoom}` },
+          { event: 'UPDATE', schema: 'public', table: 'messages' },
           (payload) => {
             const updated = payload.new;
+            if (updated.room !== chatRoom) return;
             const freshReportedIds = (() => { try { const s = localStorage.getItem('reportedMessageIds'); return s ? JSON.parse(s) : []; } catch (e) { return reportedIdsRef.current; } })();
             setMessages(prev => {
-              // A message getting flagged (e.g. someone reported it) should
-              // disappear from view; otherwise just refresh its fields in place.
               if (updated.flagged || freshReportedIds.includes(updated.id)) {
                 return prev.filter(m => m.id !== updated.id);
               }
