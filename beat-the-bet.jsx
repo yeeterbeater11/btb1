@@ -6901,6 +6901,7 @@ export default function BeatTheBet() {
     const messagesContainerRef = React.useRef(null);
     const latestMessageTimestampRef = React.useRef(0);
     const unsubscribeRef = React.useRef(null);
+    const channelRef = React.useRef(null);
 
     // ============================================================
     // MODERATION SYSTEM
@@ -7202,54 +7203,47 @@ export default function BeatTheBet() {
       loadMessages();
 
       // ============================================================
-      // Realtime subscription: Supabase pushes new/changed messages to us
-      // the instant they happen in the database, instead of us repeatedly
-      // asking "what's new?" every few seconds. This is what makes the
-      // chat feel instant and avoids ever replacing the whole message list
-      // out from under someone who just sent something.
+      // Supabase Broadcast: pure WebSocket message passing, purpose-built
+      // for low-latency chat. Unlike postgres_changes (which goes through
+      // Postgres WAL replication before delivery), Broadcast delivers
+      // directly over the WebSocket connection — typically sub-100ms.
+      //
+      // Flow: send → save to DB (persistence) + broadcast to channel
+      // (instant delivery). On page load, messages still come from DB.
       // ============================================================
       const channel = window.supabaseRealtimeClient
-        .channel(`messages-room-${chatRoom}-${Date.now()}`)
-        .on(
-          'postgres_changes',
-          { event: 'INSERT', schema: 'public', table: 'messages' },
-          (payload) => {
-            const incoming = payload.new;
-            if (incoming.room !== chatRoom) return;
-            const freshReportedIds = (() => { try { const s = localStorage.getItem('reportedMessageIds'); return s ? JSON.parse(s) : []; } catch (e) { return reportedIdsRef.current; } })();
-            if (incoming.flagged || freshReportedIds.includes(incoming.id)) return;
+        .channel(`chat-room-${chatRoom}`)
+        .on('broadcast', { event: 'new_message' }, ({ payload }) => {
+          if (!payload || payload.room !== chatRoom) return;
+          const freshReportedIds = (() => { try { const s = localStorage.getItem('reportedMessageIds'); return s ? JSON.parse(s) : []; } catch (e) { return reportedIdsRef.current; } })();
+          if (payload.flagged || freshReportedIds.includes(payload.id)) return;
 
-            setMessages(prev => {
-              const withoutOptimisticDupe = prev.filter(m =>
-                !(typeof m.id === 'string' && m.id.startsWith('temp-') && m.username === incoming.username && m.message === incoming.message)
-              );
-              if (withoutOptimisticDupe.some(m => m.id === incoming.id)) return withoutOptimisticDupe;
-              return [...withoutOptimisticDupe, incoming];
-            });
-          }
-        )
-        .on(
-          'postgres_changes',
-          { event: 'UPDATE', schema: 'public', table: 'messages' },
-          (payload) => {
-            const updated = payload.new;
-            if (updated.room !== chatRoom) return;
-            const freshReportedIds = (() => { try { const s = localStorage.getItem('reportedMessageIds'); return s ? JSON.parse(s) : []; } catch (e) { return reportedIdsRef.current; } })();
-            setMessages(prev => {
-              if (updated.flagged || freshReportedIds.includes(updated.id)) {
-                return prev.filter(m => m.id !== updated.id);
-              }
-              return prev.map(m => (m.id === updated.id ? updated : m));
-            });
-          }
-        )
+          setMessages(prev => {
+            // Drop the optimistic placeholder for this message if it exists,
+            // then add the real confirmed row (with its real database id).
+            const withoutDupe = prev.filter(m =>
+              !(typeof m.id === 'string' && m.id.startsWith('temp-') && m.username === payload.username && m.message === payload.message)
+            );
+            if (withoutDupe.some(m => m.id === payload.id)) return withoutDupe;
+            return [...withoutDupe, payload];
+          });
+        })
+        .on('broadcast', { event: 'delete_message' }, ({ payload }) => {
+          if (!payload?.id) return;
+          setMessages(prev => prev.filter(m => m.id !== payload.id));
+        })
+        .on('broadcast', { event: 'flag_message' }, ({ payload }) => {
+          if (!payload?.id) return;
+          setMessages(prev => prev.filter(m => m.id !== payload.id));
+        })
         .subscribe();
 
-      // Safety-net poll: realtime should handle everything above, but
-      // connections can occasionally drop silently (backgrounded tabs,
-      // network changes). This runs far less often than the old 4s poll and
-      // exists purely so the chat can self-heal instead of going silently
-      // stale if that happens.
+      channelRef.current = channel;
+
+      // Safety-net poll: Broadcast handles all live delivery above, but if
+      // someone's connection drops and reconnects they'll re-subscribe and
+      // potentially miss messages sent during the gap. This quiet 30s check
+      // catches that without being intrusive during normal usage.
       const safetyInterval = setInterval(async () => {
         try {
           const session = await supabase.getValidSession();
@@ -7439,6 +7433,16 @@ export default function BeatTheBet() {
         const savedMsg = Array.isArray(savedRows) && savedRows[0] ? savedRows[0] : null;
         if (savedMsg) {
           setMessages(prev => prev.map(m => (m.id === optimisticMsg.id ? savedMsg : m)));
+          // Broadcast the real saved message to everyone in the channel instantly.
+          // Other users receive this via their 'new_message' broadcast handler
+          // with no WAL replication delay — this is what makes delivery instant.
+          if (channelRef.current) {
+            channelRef.current.send({
+              type: 'broadcast',
+              event: 'new_message',
+              payload: savedMsg
+            });
+          }
         }
       } catch (e) {
         console.error('[SENDMSG] Send error:', e.message);
@@ -7518,8 +7522,9 @@ export default function BeatTheBet() {
         setReportedIds(updated);
         localStorage.setItem('reportedMessageIds', JSON.stringify(updated));
         removeMessageKeepingScrollPosition(msg.id);
-        // Invalidate the admin panel cache so it re-fetches next time it opens,
-        // picking up this newly reported message in the High queue.
+        if (channelRef.current) {
+          channelRef.current.send({ type: 'broadcast', event: 'flag_message', payload: { id: msg.id } });
+        }
         try { sessionStorage.removeItem('btb_admin_cache'); } catch (e) {}
         showSuccess('Message reported and removed.');
       } catch (e) {
@@ -7564,6 +7569,9 @@ export default function BeatTheBet() {
         }
 
         removeMessageKeepingScrollPosition(msg.id);
+        if (channelRef.current) {
+          channelRef.current.send({ type: 'broadcast', event: 'delete_message', payload: { id: msg.id } });
+        }
         showSuccess('Message deleted.');
       } catch (e) {
         showError('Could not delete message.');
