@@ -278,7 +278,7 @@ const supabase = (() => {
             const session = localStorage.getItem('sb_session');
             const token = session ? JSON.parse(session).access_token : SUPABASE_ANON_KEY;
             const res = await fetch(
-              `${SUPABASE_URL}/rest/v1/messages?room=eq.${encodeURIComponent(room)}&order=created_at.desc&limit=50`,
+              `${SUPABASE_URL}/rest/v1/messages?room=eq.${encodeURIComponent(room)}&created_at=gte.${new Date(Date.now() - 30*24*60*60*1000).toISOString()}&order=created_at.desc&limit=50`,
               {
                 headers: {
                   'apikey': SUPABASE_ANON_KEY,
@@ -362,9 +362,6 @@ const supabase = (() => {
 
 
 function AdminPanel({ adminEmails, setAdminEmails, setActiveTool, showSuccess, showError, validators }) {
-  const [criticalQueue, setCriticalQueue] = React.useState([]);
-  const [highQueue, setHighQueue] = React.useState([]);
-  const [supportQueue, setSupportQueue] = React.useState([]);
   const [userStats, setUserStats] = React.useState(null);
   const [localAdminEmails, setLocalAdminEmails] = React.useState(adminEmails);
   const [loading, setLoading] = React.useState(false);
@@ -372,7 +369,10 @@ function AdminPanel({ adminEmails, setAdminEmails, setActiveTool, showSuccess, s
   const [loadError, setLoadError] = React.useState('');
   const [newAdminEmail, setNewAdminEmail] = React.useState('');
   const [activeAdminTab, setActiveAdminTab] = React.useState(() => {
-    try { return sessionStorage.getItem('btb_admin_tab') || 'critical'; } catch (e) { return 'critical'; }
+    try {
+      const saved = sessionStorage.getItem('btb_admin_tab');
+      return (saved === 'users' || saved === 'admins') ? saved : 'users';
+    } catch (e) { return 'users'; }
   });
 
   const setAdminTab = (tab) => {
@@ -389,13 +389,10 @@ function AdminPanel({ adminEmails, setAdminEmails, setActiveTool, showSuccess, s
       const cached = sessionStorage.getItem(CACHE_KEY);
       if (cached) {
         const c = JSON.parse(cached);
-        if (c.criticalQueue) setCriticalQueue(c.criticalQueue);
-        if (c.highQueue) setHighQueue(c.highQueue);
-        if (c.supportQueue) setSupportQueue(c.supportQueue);
         if (c.userStats) setUserStats(c.userStats);
         if (c.adminEmails) setLocalAdminEmails(c.adminEmails);
         setLoaded(true);
-        setLoadError(''); // cache hit means we have good data - clear any stale error
+        setLoadError('');
         return; // Don't fetch again - user can hit Refresh manually
       }
     } catch (e) {}
@@ -422,41 +419,24 @@ function AdminPanel({ adminEmails, setAdminEmails, setActiveTool, showSuccess, s
     const safe = (promise) => promise.catch(() => ({ ok: false, data: [] }));
 
     try {
-      const [flaggedRes, suppRes, usersRes, adminsRes] = await Promise.all([
-        // Single query for all flagged+unreviewed messages, split client-side by level
-        // This catches messages reported before moderation_level was being set (null level)
-        safe(fetch(`${SUPABASE_URL}/rest/v1/messages?flagged=eq.true&reviewed=eq.false&order=created_at.desc&limit=100`, { headers: h }).then(async r => ({ ok: r.ok, data: await r.json() }))),
-        safe(fetch(`${SUPABASE_URL}/rest/v1/messages?moderation_level=eq.support&reviewed=eq.false&order=created_at.desc&limit=50`, { headers: h }).then(async r => ({ ok: r.ok, data: await r.json() }))),
+      const [usersRes, adminsRes] = await Promise.all([
         safe(fetch(`${SUPABASE_URL}/rest/v1/profiles?select=id,username,created_at,points,level&order=created_at.desc&limit=100`, { headers: h }).then(async r => ({ ok: r.ok, data: await r.json() }))),
         safe(fetch(`${SUPABASE_URL}/rest/v1/admins?select=email,added_at&order=added_at.asc`, { headers: h }).then(async r => ({ ok: r.ok, data: await r.json() }))),
       ]);
 
-      const allFlagged = flaggedRes.ok && Array.isArray(flaggedRes.data) ? flaggedRes.data : [];
-      const crit = allFlagged.filter(m => m.moderation_level === 'critical');
-      const high = allFlagged.filter(m => m.moderation_level !== 'critical'); // catches 'high', null, anything else
-      const supp = suppRes.ok && Array.isArray(suppRes.data) ? suppRes.data : [];
       const users = usersRes.ok && Array.isArray(usersRes.data) ? usersRes.data : [];
       const admins = adminsRes.ok && Array.isArray(adminsRes.data) ? adminsRes.data.map(a => a.email) : localAdminEmails;
 
-      setCriticalQueue(crit);
-      setHighQueue(high);
-      setSupportQueue(supp);
       setUserStats({ total: users.length, users });
       setLocalAdminEmails(admins);
       setAdminEmails(admins);
       localStorage.setItem('adminEmails', JSON.stringify(admins));
 
-      // Cache to sessionStorage so remounts don't re-fetch
       try {
         sessionStorage.setItem(CACHE_KEY, JSON.stringify({
-          criticalQueue: crit, highQueue: high, supportQueue: supp,
           userStats: { total: users.length, users }, adminEmails: admins
         }));
       } catch (e) {}
-
-      if (!flaggedRes.ok && !suppRes.ok) {
-        setLoadError('Could not load messages. Make sure admin_fix.sql has been run.');
-      }
     } catch (e) {
       setLoadError(`Error: ${e.message}`);
     } finally {
@@ -465,62 +445,6 @@ function AdminPanel({ adminEmails, setAdminEmails, setActiveTool, showSuccess, s
       setLoaded(true);
     }
   }, []);
-
-  const removeFromAllQueues = (msgId) => {
-    let newCrit, newHigh, newSupp;
-    setCriticalQueue(p => { newCrit = p.filter(m => m.id !== msgId); return newCrit; });
-    setHighQueue(p => { newHigh = p.filter(m => m.id !== msgId); return newHigh; });
-    setSupportQueue(p => { newSupp = p.filter(m => m.id !== msgId); return newSupp; });
-    // Update all three in a single cache write to avoid sequential read-write races
-    try {
-      const cached = sessionStorage.getItem(CACHE_KEY);
-      const c = cached ? JSON.parse(cached) : {};
-      if (newCrit !== undefined) c.criticalQueue = newCrit;
-      if (newHigh !== undefined) c.highQueue = newHigh;
-      if (newSupp !== undefined) c.supportQueue = newSupp;
-      sessionStorage.setItem(CACHE_KEY, JSON.stringify(c));
-    } catch (e) {}
-  };
-
-  const approveMessage = async (msg) => {
-    const session = await supabase.getValidSession();
-    if (!session) { showError('Session expired. Please log in again.'); return; }
-    const res = await fetch(`${SUPABASE_URL}/rest/v1/messages?id=eq.${msg.id}`, {
-      method: 'PATCH',
-      headers: { 'apikey': SUPABASE_ANON_KEY, 'Authorization': `Bearer ${session.access_token}`, 'Content-Type': 'application/json', 'Prefer': 'return=representation' },
-      body: JSON.stringify({ flagged: false, reviewed: true })
-    });
-    if (!res.ok) {
-      const err = await res.json().catch(() => ({}));
-      showError('Could not restore message: ' + (err.message || res.status));
-      return;
-    }
-    removeFromAllQueues(msg.id);
-    // Remove from local reportedMessageIds so it reappears in chat
-    try {
-      const saved = localStorage.getItem('reportedMessageIds');
-      const ids = saved ? JSON.parse(saved) : [];
-      const updated = ids.filter(id => id !== msg.id);
-      localStorage.setItem('reportedMessageIds', JSON.stringify(updated));
-    } catch (e) {}
-    showSuccess('Message restored.');
-  };
-
-  const deleteMessage = async (msg) => {
-    const session = await supabase.getValidSession();
-    if (!session) { showError('Session expired. Please log in again.'); return; }
-    const res = await fetch(`${SUPABASE_URL}/rest/v1/messages?id=eq.${msg.id}`, {
-      method: 'DELETE',
-      headers: { 'apikey': SUPABASE_ANON_KEY, 'Authorization': `Bearer ${session.access_token}`, 'Prefer': 'return=representation' }
-    });
-    if (!res.ok) {
-      const err = await res.json().catch(() => ({}));
-      showError('Could not delete message: ' + (err.message || res.status));
-      return;
-    }
-    removeFromAllQueues(msg.id);
-    showSuccess('Message deleted.');
-  };
 
   const addAdminEmail = async () => {
     const trimmed = newAdminEmail.trim().toLowerCase();
@@ -561,46 +485,6 @@ function AdminPanel({ adminEmails, setAdminEmails, setActiveTool, showSuccess, s
 
   const formatDate = (ts) => new Date(ts).toLocaleDateString('en-AU', { day: 'numeric', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' });
 
-  const QueueView = ({ msgs, type }) => {
-    const borderMap = { critical: 'border-red-400', high: 'border-orange-400', support: 'border-blue-400' };
-    const labelMap = {
-      critical: 'Auto-hidden — requires review',
-      high: 'Flagged — visible to users, needs review',
-      support: 'Support queue — user may need help'
-    };
-    const bgMap = { critical: 'bg-red-50 text-red-800', high: 'bg-orange-50 text-orange-800', support: 'bg-blue-50 text-blue-800' };
-    return (
-      <div className="space-y-4">
-        <div className={`rounded-lg p-3 text-sm font-medium ${bgMap[type]}`}>
-          {labelMap[type]} · {msgs.length} item{msgs.length !== 1 ? 's' : ''}
-        </div>
-        {msgs.length === 0 && <p className="text-center text-gray-400 py-8">Nothing in this queue.</p>}
-        {msgs.map(msg => (
-          <div key={msg.id} className={`bg-white rounded-xl shadow-md p-5 border-l-4 ${borderMap[type]}`}>
-            <div className="flex items-start justify-between mb-2">
-              <div>
-                <p className="font-semibold text-gray-800">{msg.username}</p>
-                <p className="text-xs text-gray-400">{formatDate(msg.created_at)} · #{msg.room}</p>
-              </div>
-              {msg.moderation_score && (
-                <span className="text-xs bg-gray-100 text-gray-600 px-2 py-1 rounded-full">{msg.moderation_score}% confidence</span>
-              )}
-            </div>
-            <p className="text-gray-700 bg-gray-50 rounded-lg p-3 mb-2 text-sm">{msg.message}</p>
-            {msg.moderation_reason && <p className="text-xs text-gray-500 mb-1"><strong>Reason:</strong> {msg.moderation_reason}</p>}
-            {msg.moderation_matched && <p className="text-xs text-gray-500 mb-3"><strong>Matched:</strong> "{msg.moderation_matched}"</p>}
-            <div className="flex gap-2">
-              <button onClick={() => approveMessage(msg)} className={`flex-1 ${type === 'support' ? 'bg-blue-500 hover:bg-blue-600' : 'bg-green-500 hover:bg-green-600'} text-white rounded-lg py-2 font-semibold text-sm`}>
-                {type === 'support' ? 'Mark Reviewed' : 'Restore'}
-              </button>
-              <button onClick={() => deleteMessage(msg)} className="flex-1 bg-red-500 hover:bg-red-600 text-white rounded-lg py-2 font-semibold text-sm">Delete</button>
-            </div>
-          </div>
-        ))}
-      </div>
-    );
-  };
-
   return (
     <div className="flex flex-col min-h-screen bg-gray-50 pb-20">
       <div className="bg-gray-900 text-white p-6">
@@ -608,20 +492,17 @@ function AdminPanel({ adminEmails, setAdminEmails, setActiveTool, showSuccess, s
           <ArrowLeft className="w-5 h-5 mr-2" /><span>Back</span>
         </button>
         <h1 className="text-2xl font-bold">Admin Panel</h1>
-        <p className="text-sm opacity-70">Beat the Bet — moderation & management</p>
+        <p className="text-sm opacity-70">Beat the Bet — users & management</p>
       </div>
 
       <div className="bg-white border-b border-gray-200 px-4 py-3">
         <div className="flex gap-2 overflow-x-auto">
           {[
-            { id: 'critical', label: `Critical (${criticalQueue.length})`, color: 'bg-red-600' },
-            { id: 'high', label: `High (${highQueue.length})`, color: 'bg-orange-500' },
-            { id: 'support', label: `Support (${supportQueue.length})`, color: 'bg-blue-500' },
             { id: 'users', label: `Users (${userStats?.total ?? '—'})`, color: null },
             { id: 'admins', label: 'Admins', color: null },
           ].map(tab => (
             <button key={tab.id} onClick={() => setAdminTab(tab.id)}
-              className={`px-3 py-2 rounded-lg font-semibold text-xs whitespace-nowrap transition-colors ${activeAdminTab === tab.id ? (tab.color || 'bg-gray-900') + ' text-white' : 'bg-gray-100 text-gray-700 hover:bg-gray-200'}`}>
+              className={`px-3 py-2 rounded-lg font-semibold text-xs whitespace-nowrap transition-colors ${activeAdminTab === tab.id ? 'bg-gray-900 text-white' : 'bg-gray-100 text-gray-700 hover:bg-gray-200'}`}>
               {tab.label}
             </button>
           ))}
@@ -646,10 +527,6 @@ function AdminPanel({ adminEmails, setAdminEmails, setActiveTool, showSuccess, s
               <button onClick={loadData} className="mt-2 bg-red-500 text-white px-4 py-2 rounded-lg text-sm font-semibold">Retry</button>
             </div>
           )}
-
-          {activeAdminTab === 'critical' && <QueueView msgs={criticalQueue} type="critical" />}
-          {activeAdminTab === 'high' && <QueueView msgs={highQueue} type="high" />}
-          {activeAdminTab === 'support' && <QueueView msgs={supportQueue} type="support" />}
 
           {activeAdminTab === 'users' && (
             <div className="space-y-3">
@@ -729,10 +606,10 @@ function AdminPanel({ adminEmails, setAdminEmails, setActiveTool, showSuccess, s
 // ============================================================
 // Privacy Policy Page
 // ============================================================
-const PrivacyPolicyPage = () => (
+const PrivacyPolicyPage = ({ onBack }) => (
   <div className="flex flex-col min-h-screen bg-gray-50 pb-20">
     <div className="bg-gray-900 text-white p-6">
-      <button onClick={() => setActiveTool(null)} className="flex items-center mb-4 hover:opacity-80">
+      <button onClick={onBack} className="flex items-center mb-4 hover:opacity-80">
         <ArrowLeft className="w-5 h-5 mr-2" /><span>Back</span>
       </button>
       <h1 className="text-2xl font-bold">Privacy Policy</h1>
@@ -772,10 +649,10 @@ const PrivacyPolicyPage = () => (
 // ============================================================
 // Terms of Service Page
 // ============================================================
-const TermsOfServicePage = () => (
+const TermsOfServicePage = ({ onBack }) => (
   <div className="flex flex-col min-h-screen bg-gray-50 pb-20">
     <div className="bg-gray-900 text-white p-6">
-      <button onClick={() => setActiveTool(null)} className="flex items-center mb-4 hover:opacity-80">
+      <button onClick={onBack} className="flex items-center mb-4 hover:opacity-80">
         <ArrowLeft className="w-5 h-5 mr-2" /><span>Back</span>
       </button>
       <h1 className="text-2xl font-bold">Terms of Service</h1>
@@ -830,7 +707,7 @@ export default function BeatTheBet() {
     'myBudgetData','adminEmails','reportedMessageIds',
     'appOpenTimestamps','panicButtonTimestamps','toolUsage',
     'streakData','favoritePrompts','dailyStepGoal',
-    'journalCalendarMonth','currentUser','isAuthenticated','sb_session'
+    'journalCalendarMonth','currentUser','isAuthenticated','sb_session','notificationPrefs'
   ];
 
   const clearUserScopedStorage = () => {
@@ -1394,7 +1271,7 @@ export default function BeatTheBet() {
             const mapped = entries.map(e => ({
               id: e.id,
               date: e.created_at,
-              timestamp: new Date(e.created_at).toLocaleString(),
+              timestamp: formatJournalDateTime(e.created_at),
               mode: e.mode,
               mood: e.mood,
               content: e.content,
@@ -1486,6 +1363,11 @@ export default function BeatTheBet() {
           if (s.artist_feedback && Object.keys(s.artist_feedback).length) { setArtistFeedback(s.artist_feedback); localStorage.setItem('artistFeedback', JSON.stringify(s.artist_feedback)); }
           if (s.favorite_artists?.length) { setFavoriteArtists(s.favorite_artists); localStorage.setItem('favoriteArtists', JSON.stringify(s.favorite_artists)); }
           if (s.daily_step_goal) { setDailyStepGoal(parseInt(s.daily_step_goal)); localStorage.setItem('dailyStepGoal', String(s.daily_step_goal)); }
+          if (s.notification_preferences && typeof s.notification_preferences === 'object') {
+            const np = { ...DEFAULT_NOTIFICATION_PREFS, ...s.notification_preferences };
+            setNotificationPrefs(np);
+            localStorage.setItem('notificationPrefs', JSON.stringify(np));
+          }
         }).catch(() => {}),
 
     ]).then(() => {
@@ -1590,7 +1472,7 @@ export default function BeatTheBet() {
       'favoriteArtists','savedForLater','dailyGamblingSpend','lastCheckIn',
       'journalMode','chatUsername','hasCompletedOnboarding','username',
       'userAgeRange','userCity','isAuthenticated','currentUser','sb_session',
-      'adminEmails','reportedMessageIds','appOpenTimestamps','panicButtonTimestamps'
+      'adminEmails','reportedMessageIds','appOpenTimestamps','panicButtonTimestamps','notificationPrefs'
     ];
     keys.forEach(k => localStorage.removeItem(k));
 
@@ -1646,6 +1528,62 @@ export default function BeatTheBet() {
   // ============================================================
   // Sync data to Supabase (called after profile setup and on key changes)
   // ============================================================
+  // QA-18: save one notification preference. Server is authoritative: UI only changes after a successful save.
+  const updateNotificationPref = async (key, value) => {
+    if (savingNotifKey) return;
+    setSavingNotifKey(key);
+    try {
+      const session = await supabase.getValidSession();
+      if (!session) throw new Error('Not signed in');
+      const next = { ...notificationPrefs, [key]: value };
+      const res = await fetch(`${SUPABASE_URL}/rest/v1/user_settings?on_conflict=user_id`, {
+        method: 'POST',
+        headers: {
+          'apikey': SUPABASE_ANON_KEY,
+          'Authorization': `Bearer ${session.access_token}`,
+          'Content-Type': 'application/json',
+          'Prefer': 'resolution=merge-duplicates'
+        },
+        body: JSON.stringify({ user_id: session.user.id, notification_preferences: next, updated_at: new Date().toISOString() })
+      });
+      if (!res.ok) {
+        const errText = await res.text().catch(() => '');
+        console.error('updateNotificationPref failed:', res.status, errText);
+        throw new Error('save failed');
+      }
+      setNotificationPrefs(next);
+      localStorage.setItem('notificationPrefs', JSON.stringify(next));
+    } catch (e) {
+      showError("Couldn't save your notification setting. Please try again.");
+    } finally {
+      setSavingNotifKey(null);
+    }
+  };
+
+  // QA-18: on every load of a signed-in session, treat the server copy as authoritative
+  React.useEffect(() => {
+    if (!isAuthenticated) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const session = await supabase.getValidSession();
+        if (!session) return;
+        const res = await fetch(`${SUPABASE_URL}/rest/v1/user_settings?user_id=eq.${session.user.id}&select=notification_preferences&limit=1`, {
+          headers: { 'apikey': SUPABASE_ANON_KEY, 'Authorization': `Bearer ${session.access_token}` }
+        });
+        if (!res.ok) return; // column missing / offline: keep the cached value
+        const rows = await res.json();
+        const np = Array.isArray(rows) && rows[0] && rows[0].notification_preferences;
+        if (!cancelled && np && typeof np === 'object') {
+          const merged = { ...DEFAULT_NOTIFICATION_PREFS, ...np };
+          setNotificationPrefs(merged);
+          localStorage.setItem('notificationPrefs', JSON.stringify(merged));
+        }
+      } catch (e) {}
+    })();
+    return () => { cancelled = true; };
+  }, [isAuthenticated]);
+
   const syncProfileToSupabase = async (overrides = {}) => {
     const session = supabase.getSession();
     if (!session) return;
@@ -1731,6 +1669,26 @@ export default function BeatTheBet() {
   });
   
   const [onboardingStep, setOnboardingStep] = useState(0);
+  // QA-00: true when an existing user revisits the guide from Settings (view-only, never writes data)
+  const [onboardingRevisit, setOnboardingRevisit] = useState(false);
+
+  // QA-18: notification preferences (server-authoritative via user_settings.notification_preferences)
+  const DEFAULT_NOTIFICATION_PREFS = { dailyCheckIn: true, paydayAlerts: true, patternAlerts: true };
+  const [notificationPrefs, setNotificationPrefs] = useState(() => {
+    try {
+      const saved = JSON.parse(localStorage.getItem('notificationPrefs') || 'null');
+      return saved && typeof saved === 'object' ? { ...DEFAULT_NOTIFICATION_PREFS, ...saved } : DEFAULT_NOTIFICATION_PREFS;
+    } catch (e) { return DEFAULT_NOTIFICATION_PREFS; }
+  });
+  const [savingNotifKey, setSavingNotifKey] = useState(null);
+
+  // Settings state lifted to BeatTheBet scope because SettingsPage is a nested component that
+  // is re-created on every render (local state there is lost whenever any outer state changes).
+  const [settingsEditingUsername, setSettingsEditingUsername] = useState(false);
+  const [settingsTempUsername, setSettingsTempUsername] = useState('');
+  const [settingsUsernameError, setSettingsUsernameError] = useState('');
+  const [settingsSavingUsername, setSettingsSavingUsername] = useState(false);
+  const [exporting, setExporting] = useState(false);
   
   // Tool Usage Tracking
   const [toolUsage, setToolUsage] = useState(() => {
@@ -1994,13 +1952,20 @@ export default function BeatTheBet() {
   };
 
   // Journal Functions
+  // QA-13: one canonical display format for journal times (hours and minutes only, no seconds),
+  // always derived from the entry's stored date so every view agrees.
+  const formatJournalTime = (iso) => new Date(iso).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' });
+  const formatJournalDateTime = (iso) => new Date(iso).toLocaleString('en-US', {
+    year: 'numeric', month: 'numeric', day: 'numeric', hour: 'numeric', minute: '2-digit'
+  });
+
   const saveJournalEntry = (entry) => {
     const newEntry = {
       id: Date.now(),
       date: new Date().toISOString(),
-      timestamp: new Date().toLocaleString(),
       ...entry
     };
+    newEntry.timestamp = formatJournalDateTime(newEntry.date);
     
     const updated = [...journalEntries, newEntry];
     setJournalEntries(updated);
@@ -2214,6 +2179,7 @@ export default function BeatTheBet() {
         {/* Alerts Section */}
         <div className="px-6 pt-4 space-y-3">
           {(() => {
+            if (!notificationPrefs.paydayAlerts) return null;
             if (!paydaySettings.enabled || !paydaySettings.startDate) return null;
             
             const start = new Date(paydaySettings.startDate);
@@ -2254,6 +2220,7 @@ export default function BeatTheBet() {
           })()}
 
           {(() => {
+            if (!notificationPrefs.patternAlerts) return null;
             const liveWarning = getProactiveLiveWarning();
             if (!liveWarning) return null;
             
@@ -2659,8 +2626,8 @@ export default function BeatTheBet() {
     if (activeTool === 'why-quitting') return <WhyImQuittingPage />;
     if (activeTool === 'settings') return <SettingsPage />;
     if (activeTool === 'admin') return isAdmin() ? <AdminPanel adminEmails={adminEmails} setAdminEmails={setAdminEmails} setActiveTool={setActiveTool} showSuccess={showSuccess} showError={showError} validators={validators} /> : <div className='p-8 text-center text-gray-500'>Access denied.</div>;
-    if (activeTool === 'privacy') return <PrivacyPolicyPage />;
-    if (activeTool === 'terms') return <TermsOfServicePage />;
+    if (activeTool === 'privacy') return <PrivacyPolicyPage onBack={() => setActiveTool(null)} />;
+    if (activeTool === 'terms') return <TermsOfServicePage onBack={() => setActiveTool(null)} />;
     if (activeTool === 'nearby') return <NearbyPage />;
 
     // Otherwise show the tools list
@@ -3393,6 +3360,7 @@ export default function BeatTheBet() {
     // "Something Different" swap tracking (session-only, resets on reload)
     const [swappedDifferentIds, setSwappedDifferentIds] = React.useState([]);
     const [swappingDifferent, setSwappingDifferent] = React.useState(false);
+    const [skippingChallenge, setSkippingChallenge] = React.useState(false);
 
     // Recent completions collapse toggle
     const [showRecentCompletions, setShowRecentCompletions] = React.useState(false);
@@ -4280,25 +4248,98 @@ export default function BeatTheBet() {
       setFeedbackChallenge(null);
     };
 
+    // QA-17: Skip replaces ONLY the skipped slot with a different eligible challenge.
     const skipChallenge = async (challengeId, slotType) => {
-      const headers = await getHeaders();
-      const session = await supabase.getValidSession();
-      if (!session) return;
-      const today = new Date().toISOString().split('T')[0];
+      if (skippingChallenge || swappingDifferent) return; // block overlapping requests
+      if (!dailySet || !preferences) return;
 
-      await fetch(`${SUPABASE_URL_LOCAL}/rest/v1/user_challenge_history`, {
-        method: 'POST',
-        headers,
-        body: JSON.stringify({
-          user_id: session.user.id,
-          challenge_id: challengeId,
-          challenge_date: today,
-          slot_type: slotType,
-          status: 'skipped',
-          dismissed_at: new Date().toISOString(),
-          shown_at: new Date().toISOString()
-        })
-      });
+      const slotColumn = {
+        quick_win: 'quick_win_challenge_id',
+        personal_match: 'personal_match_challenge_id',
+        something_different: 'different_challenge_id'
+      }[slotType];
+      if (!slotColumn || dailySet[slotColumn] !== challengeId) return;
+
+      setSkippingChallenge(true);
+      try {
+        const today = new Date().toISOString().split('T')[0];
+        const skippedTodayIds = history
+          .filter(h => h.status === 'skipped' && h.challenge_date === today)
+          .map(h => h.challenge_id);
+
+        // Never reuse: anything in today's other slots, the challenge being skipped,
+        // or anything already skipped today. Normal cooldown/eligibility rules still apply.
+        const recentIds = getRecentChallengeIds(history, challenges);
+        const excluded = [
+          dailySet.quick_win_challenge_id,
+          dailySet.personal_match_challenge_id,
+          dailySet.different_challenge_id,
+          challengeId,
+          ...skippedTodayIds,
+          ...swappedDifferentIds
+        ].filter(Boolean);
+
+        const eligible = challenges.filter(c => isEligible(c, preferences, recentIds, excluded));
+        if (eligible.length === 0) {
+          showError("No other eligible challenges right now, so this one stays for today.");
+          return;
+        }
+
+        const scoreFn = slotType === 'quick_win'
+          ? (c) => scoreForQuickWin(c)
+          : slotType === 'personal_match'
+            ? (c) => scoreForPersonalMatch(c, preferences, history, challenges)
+            : (c) => scoreForSomethingDifferent(c, preferences, pillarStats, history, challenges);
+        const replacement = eligible
+          .map(c => ({ c, score: scoreFn(c) }))
+          .sort((a, b) => b.score - a.score)[0].c;
+
+        const saved = await saveDailySet({
+          quick_win_challenge_id: dailySet.quick_win_challenge_id,
+          personal_match_challenge_id: dailySet.personal_match_challenge_id,
+          different_challenge_id: dailySet.different_challenge_id,
+          [slotColumn]: replacement.id
+        });
+        if (!saved) {
+          showError('Could not replace that challenge. Please try again.');
+          return;
+        }
+
+        // Record the skip (not a completion: no points, no completion rewards)
+        const headers = await getHeaders();
+        const session = await supabase.getValidSession();
+        if (session) {
+          const skipRow = {
+            user_id: session.user.id,
+            challenge_id: challengeId,
+            challenge_date: today,
+            slot_type: slotType,
+            status: 'skipped',
+            dismissed_at: new Date().toISOString(),
+            shown_at: new Date().toISOString()
+          };
+          try {
+            const res = await fetch(`${SUPABASE_URL_LOCAL}/rest/v1/user_challenge_history`, {
+              method: 'POST',
+              headers,
+              body: JSON.stringify(skipRow)
+            });
+            if (res.ok) {
+              setHistory(prev => [...prev, skipRow]);
+            } else {
+              console.error('skipChallenge history write failed:', res.status, await res.text().catch(() => ''));
+            }
+          } catch (e) {
+            console.error('skipChallenge history write threw:', e);
+          }
+        }
+        showSuccess('Swapped in a new challenge.');
+      } catch (e) {
+        console.error('skipChallenge failed:', e);
+        showError('Could not skip right now. Please try again.');
+      } finally {
+        setSkippingChallenge(false);
+      }
     };
 
     // ============================================================
@@ -4406,7 +4447,8 @@ export default function BeatTheBet() {
                 </button>
                 <button
                   onClick={() => skipChallenge(challengeId, slotType)}
-                  className="px-4 bg-gray-100 hover:bg-gray-200 text-gray-600 rounded-lg py-2.5 font-semibold text-sm transition-colors"
+                  disabled={skippingChallenge || swappingDifferent}
+                  className="px-4 bg-gray-100 hover:bg-gray-200 disabled:opacity-50 disabled:cursor-wait text-gray-600 rounded-lg py-2.5 font-semibold text-sm transition-colors"
                 >
                   Skip
                 </button>
@@ -5164,22 +5206,42 @@ export default function BeatTheBet() {
               </button>
             )}
 
-            {/* Pillar activity summary */}
-            {Object.keys(pillarStats).length > 0 && (
-              <div className="bg-white rounded-xl shadow-md p-5">
-                <h3 className="font-bold text-gray-800 mb-3">Your activity this month</h3>
-                <div className="space-y-2">
-                  {Object.entries(pillarStats)
-                    .sort(([, a], [, b]) => b - a)
-                    .map(([pillar, count]) => (
-                      <div key={pillar} className="flex items-center justify-between">
-                        <span className="text-sm text-gray-700">{pillar}</span>
-                        <span className="text-sm font-semibold text-gray-800">{Math.round(count)} {Math.round(count) === 1 ? 'activity' : 'activities'}</span>
-                      </div>
-                    ))}
+            {/* Pillar activity summary (QA-06: current calendar month only, user's local timezone) */}
+            {(() => {
+              const now = new Date();
+              const monthStart = new Date(now.getFullYear(), now.getMonth(), 1, 0, 0, 0, 0);
+              const nextMonthStart = new Date(now.getFullYear(), now.getMonth() + 1, 1, 0, 0, 0, 0);
+              const monthStats = {};
+              history.filter(h => h.status === 'completed').forEach(h => {
+                const when = new Date(h.completed_at || h.challenge_date);
+                if (isNaN(when.getTime()) || when < monthStart || when >= nextMonthStart) return;
+                const chall = challenges.find(c => c.id === h.challenge_id);
+                if (!chall) return;
+                monthStats[chall.primary_pillar] = (monthStats[chall.primary_pillar] || 0) + 1;
+                (chall.secondary_pillars || []).forEach(p => {
+                  monthStats[p] = (monthStats[p] || 0) + 0.5;
+                });
+              });
+              return (
+                <div className="bg-white rounded-xl shadow-md p-5">
+                  <h3 className="font-bold text-gray-800 mb-3">Your activity this month</h3>
+                  {Object.keys(monthStats).length === 0 ? (
+                    <p className="text-sm text-gray-500">No activities completed yet this month.</p>
+                  ) : (
+                    <div className="space-y-2">
+                      {Object.entries(monthStats)
+                        .sort(([, a], [, b]) => b - a)
+                        .map(([pillar, count]) => (
+                          <div key={pillar} className="flex items-center justify-between">
+                            <span className="text-sm text-gray-700">{pillar}</span>
+                            <span className="text-sm font-semibold text-gray-800">{Math.round(count)} {Math.round(count) === 1 ? 'activity' : 'activities'}</span>
+                          </div>
+                        ))}
+                    </div>
+                  )}
                 </div>
-              </div>
-            )}
+              );
+            })()}
 
             {/* Recent completions */}
             <RecentCompletionsSection />
@@ -5514,6 +5576,12 @@ export default function BeatTheBet() {
     const { accounts, primaryIncome, additionalIncome, expenses, allocations, tags } = budgetData;
 
     const saveBudgetData = (updated) => {
+      // QA-11: never persist a negative (or non-numeric) expense amount, whatever the caller
+      if ((updated.expenses || []).some(e => !Number.isFinite(parseFloat(e.amount)) || parseFloat(e.amount) < 0)) {
+        console.error('saveBudgetData blocked: invalid expense amount');
+        showError('Negative amounts are not allowed for expenses.');
+        return;
+      }
       setBudgetData(updated);
       localStorage.setItem('myBudgetData', JSON.stringify(updated));
       const session = supabase.getSession();
@@ -5689,8 +5757,13 @@ export default function BeatTheBet() {
       setShowExpenseForm(true);
     };
 
+    // Derived (not stored) so the error can never go stale
+    const expAmountNum = parseFloat(expAmount);
+    const expAmountNegative = expAmount !== '' && !isNaN(expAmountNum) && expAmountNum < 0;
+    const expAmountInvalid = expAmount === '' || isNaN(expAmountNum) || expAmountNegative;
+
     const addOrUpdateExpense = () => {
-      if (!expTitle.trim() || !expAmount) return;
+      if (!expTitle.trim() || expAmountInvalid) return;
       let updatedTags = tags;
       let finalTag = expTag;
       if (showNewTagInput && newTagInput.trim()) {
@@ -5971,13 +6044,19 @@ export default function BeatTheBet() {
                       placeholder="e.g. Rent, Netflix, Car loan"
                       className="w-full p-2.5 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-blue-500"
                     />
+                    {expAmountNegative && (
+                      <p id="exp-amount-error" role="alert" className="text-sm text-red-600">Negative amounts are not allowed for expenses.</p>
+                    )}
                     <div className="flex gap-2">
-                      <div className="flex items-center gap-1 flex-1 border border-gray-300 rounded-lg px-2.5 bg-white focus-within:ring-2 focus-within:ring-blue-500">
+                      <div className={`flex items-center gap-1 flex-1 border rounded-lg px-2.5 bg-white focus-within:ring-2 focus-within:ring-blue-500 ${expAmountNegative ? 'border-red-500' : 'border-gray-300'}`}>
                         <span className="text-gray-500 text-sm">$</span>
                         <input
                           type="number"
+                          min="0"
                           value={expAmount}
                           onChange={(e) => setExpAmount(e.target.value)}
+                          aria-invalid={expAmountNegative}
+                          aria-describedby={expAmountNegative ? 'exp-amount-error' : undefined}
                           placeholder="Amount"
                           className="flex-1 p-2.5 focus:outline-none text-sm bg-transparent"
                         />
@@ -6016,7 +6095,7 @@ export default function BeatTheBet() {
                       </select>
                     )}
 
-                    <button onClick={addOrUpdateExpense} disabled={!expTitle.trim() || !expAmount} className="w-full bg-blue-500 hover:bg-blue-600 disabled:bg-gray-300 text-white rounded-lg py-2.5 font-semibold text-sm">
+                    <button onClick={addOrUpdateExpense} disabled={!expTitle.trim() || expAmountInvalid} className="w-full bg-blue-500 hover:bg-blue-600 disabled:bg-gray-300 text-white rounded-lg py-2.5 font-semibold text-sm">
                       {editingExpenseId ? 'Save Changes' : 'Add Expense'}
                     </button>
                   </div>
@@ -6879,10 +6958,27 @@ export default function BeatTheBet() {
     );
   };
 
-  const CommunityChatPageImpl = ({ chatRoom, setChatRoom, username, setUsername, hasSetUsername, setHasSetUsername, level, selectedInterests }) => {
+  const CommunityChatPageImpl = ({ chatRoom, setChatRoom, username, setUsername, hasSetUsername, setHasSetUsername, level, selectedInterests, isAdminUser }) => {
     const [newMessage, setNewMessage] = React.useState('');
     const [showUsernameSetup, setShowUsernameSetup] = React.useState(!hasSetUsername);
     const [tempUsername, setTempUsername] = React.useState('');
+    const usernameTriggerRef = React.useRef(null);
+    const usernameInputRef = React.useRef(null);
+    // Editing an existing username is dismissible; first-time registration is not.
+    const closeUsernameModal = () => {
+      setShowUsernameSetup(false);
+      setTempUsername('');
+      const t = usernameTriggerRef.current;
+      if (t && typeof t.focus === 'function') setTimeout(() => t.focus(), 0);
+    };
+    React.useEffect(() => {
+      if (!showUsernameSetup) return;
+      if (usernameInputRef.current) usernameInputRef.current.focus();
+      if (!hasSetUsername) return;
+      const onKey = (e) => { if (e.key === 'Escape') closeUsernameModal(); };
+      document.addEventListener('keydown', onKey);
+      return () => document.removeEventListener('keydown', onKey);
+    }, [showUsernameSetup, hasSetUsername]);
     const [messages, setMessages] = React.useState([]);
     const [loadingMessages, setLoadingMessages] = React.useState(true);
     const [sending, setSending] = React.useState(false);
@@ -6902,6 +6998,14 @@ export default function BeatTheBet() {
     const latestMessageTimestampRef = React.useRef(0);
     const unsubscribeRef = React.useRef(null);
     const channelRef = React.useRef(null);
+
+    // Chat Mod Panel state (admin only)
+    const [showModPanel, setShowModPanel] = React.useState(false);
+    const [modCriticalQueue, setModCriticalQueue] = React.useState([]);
+    const [modHighQueue, setModHighQueue] = React.useState([]);
+    const [modSupportQueue, setModSupportQueue] = React.useState([]);
+    const [modActiveTab, setModActiveTab] = React.useState('critical');
+    const [modLoading, setModLoading] = React.useState(false);
 
     // ============================================================
     // MODERATION SYSTEM
@@ -7173,7 +7277,7 @@ export default function BeatTheBet() {
           const session = await supabase.getValidSession();
           const token = session ? session.access_token : SUPABASE_ANON_KEY;
           const res = await fetch(
-            `${SUPABASE_URL}/rest/v1/messages?room=eq.${encodeURIComponent(chatRoom)}&order=created_at.desc&limit=50`,
+            `${SUPABASE_URL}/rest/v1/messages?room=eq.${encodeURIComponent(chatRoom)}&created_at=gte.${new Date(Date.now() - 30*24*60*60*1000).toISOString()}&order=created_at.desc&limit=50`,
             {
               headers: {
                 'apikey': SUPABASE_ANON_KEY,
@@ -7236,6 +7340,26 @@ export default function BeatTheBet() {
           if (!payload?.id) return;
           setMessages(prev => prev.filter(m => m.id !== payload.id));
         })
+        .on('broadcast', { event: 'restore_message' }, ({ payload }) => {
+          if (!payload?.id || payload.room !== chatRoom) return;
+          // Clear from local reportedIds so the reporter sees it reappear too
+          try {
+            const saved = localStorage.getItem('reportedMessageIds');
+            const ids = saved ? JSON.parse(saved) : [];
+            if (ids.includes(payload.id)) {
+              localStorage.setItem('reportedMessageIds', JSON.stringify(ids.filter(id => id !== payload.id)));
+              setReportedIds(prev => prev.filter(id => id !== payload.id));
+            }
+          } catch (e) {}
+          // Add back to message list in correct chronological position
+          setMessages(prev => {
+            if (prev.some(m => m.id === payload.id)) return prev;
+            const inserted = [...prev, payload].sort((a, b) =>
+              new Date(a.created_at) - new Date(b.created_at)
+            );
+            return inserted;
+          });
+        })
         .subscribe();
 
       channelRef.current = channel;
@@ -7249,7 +7373,7 @@ export default function BeatTheBet() {
           const session = await supabase.getValidSession();
           const token = session ? session.access_token : SUPABASE_ANON_KEY;
           const res = await fetch(
-            `${SUPABASE_URL}/rest/v1/messages?room=eq.${encodeURIComponent(chatRoom)}&order=created_at.desc&limit=50`,
+            `${SUPABASE_URL}/rest/v1/messages?room=eq.${encodeURIComponent(chatRoom)}&created_at=gte.${new Date(Date.now() - 30*24*60*60*1000).toISOString()}&order=created_at.desc&limit=50`,
             {
               headers: {
                 'apikey': SUPABASE_ANON_KEY,
@@ -7318,6 +7442,8 @@ export default function BeatTheBet() {
       setHasSetUsername(true);
       localStorage.setItem('chatUsername', tempUsername.trim());
       setShowUsernameSetup(false);
+      const t = usernameTriggerRef.current;
+      if (t && typeof t.focus === 'function') setTimeout(() => t.focus(), 0);
     };
 
     const sendMessage = async () => {
@@ -7600,26 +7726,69 @@ export default function BeatTheBet() {
             <ArrowLeft className="w-5 h-5 mr-2" />
             <span>Back to Tools</span>
           </button>
-          <div className="flex items-center">
-            <div className="bg-white bg-opacity-20 p-3 rounded-full mr-4">
-              <Users className="w-8 h-8" />
+          <div className="flex items-center justify-between">
+            <div className="flex items-center">
+              <div className="bg-white bg-opacity-20 p-3 rounded-full mr-4">
+                <Users className="w-8 h-8" />
+              </div>
+              <div>
+                <h1 className="text-2xl font-bold">Community Chat</h1>
+                <p className="text-sm opacity-90">Anonymous support, 24/7</p>
+              </div>
             </div>
-            <div>
-              <h1 className="text-2xl font-bold">Community Chat</h1>
-              <p className="text-sm opacity-90">Anonymous support, 24/7</p>
-            </div>
+            {isAdminUser && (
+              <button
+                onClick={() => {
+                  setShowModPanel(true);
+                  setModLoading(true);
+                  supabase.getValidSession().then(session => {
+                    if (!session) { setModLoading(false); return; }
+                    const h = { 'apikey': SUPABASE_ANON_KEY, 'Authorization': `Bearer ${session.access_token}` };
+                    Promise.all([
+                      fetch(`${SUPABASE_URL}/rest/v1/messages?flagged=eq.true&reviewed=eq.false&order=created_at.desc&limit=100`, { headers: h }).then(r => r.ok ? r.json() : []),
+                      fetch(`${SUPABASE_URL}/rest/v1/messages?moderation_level=eq.support&reviewed=eq.false&order=created_at.desc&limit=50`, { headers: h }).then(r => r.ok ? r.json() : [])
+                    ]).then(([flagged, support]) => {
+                      const crit = flagged.filter(m => m.moderation_level === 'critical');
+                      const high = flagged.filter(m => m.moderation_level !== 'critical');
+                      setModCriticalQueue(crit);
+                      setModHighQueue(high);
+                      setModSupportQueue(support);
+                      setModLoading(false);
+                    }).catch(() => setModLoading(false));
+                  });
+                }}
+                className="bg-white bg-opacity-20 hover:bg-opacity-30 px-3 py-1.5 rounded-lg text-sm font-bold transition-colors flex items-center gap-1.5"
+              >
+                🛡️ Mod
+                {(modCriticalQueue.length + modHighQueue.length) > 0 && (
+                  <span className="bg-red-500 text-white text-xs rounded-full w-5 h-5 flex items-center justify-center font-bold">
+                    {modCriticalQueue.length + modHighQueue.length}
+                  </span>
+                )}
+              </button>
+            )}
           </div>
         </div>
 
         {/* Username Setup Modal */}
         {showUsernameSetup && (
-          <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-6 z-50" onClick={(e) => e.stopPropagation()}>
-            <div className="bg-white rounded-xl shadow-2xl p-6 max-w-md w-full" onClick={(e) => e.stopPropagation()}>
-              <h2 className="text-xl font-bold text-gray-800 mb-2">Choose Your Username</h2>
+          <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-6 z-50" onClick={() => { if (hasSetUsername) closeUsernameModal(); }}>
+            <div className="bg-white rounded-xl shadow-2xl p-6 max-w-md w-full relative" role="dialog" aria-modal="true" aria-labelledby="chat-username-title" onClick={(e) => e.stopPropagation()}>
+              {hasSetUsername && (
+                <button
+                  onClick={closeUsernameModal}
+                  aria-label="Close"
+                  className="absolute top-3 right-3 w-8 h-8 flex items-center justify-center rounded-full text-gray-500 hover:text-gray-800 hover:bg-gray-100 text-xl leading-none"
+                >
+                  ×
+                </button>
+              )}
+              <h2 id="chat-username-title" className="text-xl font-bold text-gray-800 mb-2">Choose Your Username</h2>
               <p className="text-gray-600 text-sm mb-4">
                 Pick an anonymous username. No real name, no personal info.
               </p>
               <input
+                ref={usernameInputRef}
                 type="text"
                 value={tempUsername}
                 onChange={(e) => setTempUsername(e.target.value)}
@@ -7767,7 +7936,7 @@ export default function BeatTheBet() {
             {username && (
               <div className="mt-2 flex items-center justify-between text-xs text-gray-400">
                 <span>Chatting as <strong className="text-gray-600">{username}</strong></span>
-                <button onClick={() => setShowUsernameSetup(true)} className="text-indigo-500 hover:text-indigo-600">
+                <button onClick={(e) => { usernameTriggerRef.current = e.currentTarget; setTempUsername(username || ''); setShowUsernameSetup(true); }} className="text-indigo-500 hover:text-indigo-600">
                   Change
                 </button>
               </div>
@@ -7781,6 +7950,126 @@ export default function BeatTheBet() {
             Be kind and supportive. No gambling sites, links, or personal info. Hover a message to report or delete it.
           </p>
         </div>
+
+        {/* Chat Mod Panel — admin only, slide-up modal */}
+        {showModPanel && (
+          <div className="fixed inset-0 bg-black bg-opacity-50 z-50 flex items-end justify-center p-4">
+            <div className="bg-white rounded-t-2xl w-full max-w-lg max-h-[85vh] flex flex-col">
+              {/* Header */}
+              <div className="flex items-center justify-between p-5 border-b border-gray-200">
+                <div>
+                  <h3 className="font-bold text-gray-800 text-lg">🛡️ Moderation Queue</h3>
+                  <p className="text-xs text-gray-500">Review flagged messages</p>
+                </div>
+                <button onClick={() => setShowModPanel(false)} className="text-gray-400 hover:text-gray-600 text-2xl leading-none">×</button>
+              </div>
+
+              {/* Tab bar */}
+              <div className="flex gap-2 px-4 py-3 border-b border-gray-200 overflow-x-auto">
+                {[
+                  { id: 'critical', label: `Critical (${modCriticalQueue.length})`, color: 'bg-red-600' },
+                  { id: 'high', label: `High (${modHighQueue.length})`, color: 'bg-orange-500' },
+                  { id: 'support', label: `Support (${modSupportQueue.length})`, color: 'bg-blue-500' },
+                ].map(tab => (
+                  <button key={tab.id} onClick={() => setModActiveTab(tab.id)}
+                    className={`px-3 py-1.5 rounded-lg font-semibold text-xs whitespace-nowrap transition-colors ${modActiveTab === tab.id ? tab.color + ' text-white' : 'bg-gray-100 text-gray-700 hover:bg-gray-200'}`}>
+                    {tab.label}
+                  </button>
+                ))}
+              </div>
+
+              {/* Queue content */}
+              <div className="flex-1 overflow-y-auto p-4 space-y-3">
+                {modLoading ? (
+                  <div className="text-center py-8">
+                    <div className="w-8 h-8 border-4 border-gray-200 border-t-gray-800 rounded-full animate-spin mx-auto mb-3"></div>
+                    <p className="text-gray-400 text-sm">Loading queue...</p>
+                  </div>
+                ) : (() => {
+                  const queueMap = { critical: modCriticalQueue, high: modHighQueue, support: modSupportQueue };
+                  const msgs = queueMap[modActiveTab] || [];
+                  const borderMap = { critical: 'border-red-400', high: 'border-orange-400', support: 'border-blue-400' };
+                  const labelMap = { critical: 'Auto-hidden — requires review', high: 'Flagged — needs review', support: 'Support queue — user may need help' };
+
+                  const removeFromModQueues = (msgId) => {
+                    setModCriticalQueue(p => p.filter(m => m.id !== msgId));
+                    setModHighQueue(p => p.filter(m => m.id !== msgId));
+                    setModSupportQueue(p => p.filter(m => m.id !== msgId));
+                  };
+
+                  const modApprove = async (msg) => {
+                    const session = await supabase.getValidSession();
+                    if (!session) return;
+                    const res = await fetch(`${SUPABASE_URL}/rest/v1/messages?id=eq.${msg.id}`, {
+                      method: 'PATCH',
+                      headers: { 'apikey': SUPABASE_ANON_KEY, 'Authorization': `Bearer ${session.access_token}`, 'Content-Type': 'application/json', 'Prefer': 'return=representation' },
+                      body: JSON.stringify({ flagged: false, reviewed: true })
+                    });
+                    if (!res.ok) { showError('Could not restore message.'); return; }
+                    const rows = await res.json().catch(() => []);
+                    const restoredMsg = Array.isArray(rows) && rows[0] ? rows[0] : { ...msg, flagged: false, reviewed: true };
+                    removeFromModQueues(msg.id);
+                    try {
+                      const saved = localStorage.getItem('reportedMessageIds');
+                      const ids = saved ? JSON.parse(saved) : [];
+                      localStorage.setItem('reportedMessageIds', JSON.stringify(ids.filter(id => id !== msg.id)));
+                    } catch (e) {}
+                    if (channelRef.current) {
+                      channelRef.current.send({ type: 'broadcast', event: 'restore_message', payload: restoredMsg });
+                    }
+                    showSuccess('Message restored.');
+                  };
+
+                  const modDelete = async (msg) => {
+                    const session = await supabase.getValidSession();
+                    if (!session) return;
+                    const res = await fetch(`${SUPABASE_URL}/rest/v1/messages?id=eq.${msg.id}`, {
+                      method: 'DELETE',
+                      headers: { 'apikey': SUPABASE_ANON_KEY, 'Authorization': `Bearer ${session.access_token}` }
+                    });
+                    if (!res.ok) { showError('Could not delete message.'); return; }
+                    removeFromModQueues(msg.id);
+                    if (channelRef.current) {
+                      channelRef.current.send({ type: 'broadcast', event: 'delete_message', payload: { id: msg.id } });
+                    }
+                    showSuccess('Message deleted.');
+                  };
+
+                  return (
+                    <>
+                      {msgs.length > 0 && (
+                        <p className="text-xs text-gray-500">{labelMap[modActiveTab]} · {msgs.length} item{msgs.length !== 1 ? 's' : ''}</p>
+                      )}
+                      {msgs.length === 0 && (
+                        <p className="text-center text-gray-400 py-8 text-sm">Nothing in this queue.</p>
+                      )}
+                      {msgs.map(msg => (
+                        <div key={msg.id} className={`bg-white rounded-xl border border-gray-200 border-l-4 ${borderMap[modActiveTab]} p-4`}>
+                          <div className="flex items-start justify-between mb-2">
+                            <div>
+                              <p className="font-semibold text-gray-800 text-sm">{msg.username}</p>
+                              <p className="text-xs text-gray-400">#{msg.room} · {new Date(msg.created_at).toLocaleString('en-AU', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' })}</p>
+                            </div>
+                            {msg.moderation_score && <span className="text-xs bg-gray-100 text-gray-600 px-2 py-0.5 rounded-full">{msg.moderation_score}%</span>}
+                          </div>
+                          <p className="text-gray-700 bg-gray-50 rounded-lg p-3 mb-2 text-sm">{msg.message}</p>
+                          {msg.moderation_reason && <p className="text-xs text-gray-500 mb-1"><strong>Reason:</strong> {msg.moderation_reason}</p>}
+                          <div className="flex gap-2 mt-3">
+                            <button onClick={() => modApprove(msg)}
+                              className={`flex-1 ${modActiveTab === 'support' ? 'bg-blue-500 hover:bg-blue-600' : 'bg-green-500 hover:bg-green-600'} text-white rounded-lg py-2 font-semibold text-sm`}>
+                              {modActiveTab === 'support' ? 'Mark Reviewed' : 'Restore'}
+                            </button>
+                            <button onClick={() => modDelete(msg)} className="flex-1 bg-red-500 hover:bg-red-600 text-white rounded-lg py-2 font-semibold text-sm">Delete</button>
+                          </div>
+                        </div>
+                      ))}
+                    </>
+                  );
+                })()}
+              </div>
+            </div>
+          </div>
+        )}
       </div>
     );
   };
@@ -7797,7 +8086,7 @@ export default function BeatTheBet() {
   const CommunityChatPageRef = React.useRef(CommunityChatPageImpl);
   const CommunityChatPage = () =>
     React.createElement(CommunityChatPageRef.current, {
-      chatRoom, setChatRoom, username, setUsername, hasSetUsername, setHasSetUsername, level, selectedInterests
+      chatRoom, setChatRoom, username, setUsername, hasSetUsername, setHasSetUsername, level, selectedInterests, isAdminUser
     });
 
   const NearbyPage = () => (
@@ -8279,12 +8568,21 @@ export default function BeatTheBet() {
     const [nearestMeeting, setNearestMeeting] = useState('');
     const [quickWhyReason, setQuickWhyReason] = useState('');
 
+    const isRevisit = onboardingRevisit;
+
     const completeOnboarding = () => {
+      if (isRevisit) {
+        // View-only walkthrough: close without touching any stored data
+        setOnboardingRevisit(false);
+        setOnboardingStep(0);
+        return;
+      }
       setHasCompletedOnboarding(true);
       localStorage.setItem('hasCompletedOnboarding', 'true');
     };
 
     const skipOnboarding = () => {
+      if (isRevisit) { completeOnboarding(); return; }
       if (window.confirm('Are you sure? These steps help protect you from relapse.')) {
         completeOnboarding();
       }
@@ -8371,6 +8669,7 @@ export default function BeatTheBet() {
               </div>
               <button
                 onClick={() => {
+                if (isRevisit) { setOnboardingStep(2); return; }
                 const today = new Date().toISOString().split('T')[0];
                 setTempStartDate(today);
                 const d = new Date(today);
@@ -8389,7 +8688,7 @@ export default function BeatTheBet() {
                 onClick={skipOnboarding}
                 className="w-full text-gray-500 text-sm mt-3 hover:text-gray-700"
               >
-                Skip setup (not recommended)
+                {isRevisit ? 'Close guide' : 'Skip setup (not recommended)'}
               </button>
             </div>
           );
@@ -8556,7 +8855,8 @@ export default function BeatTheBet() {
                   Your Main Reason (one sentence)
                 </label>
                 <textarea
-                  value={quickWhyReason}
+                  value={isRevisit ? (whyImQuitting.primaryReason || '') : quickWhyReason}
+                  readOnly={isRevisit}
                   onChange={(e) => setQuickWhyReason(e.target.value)}
                   placeholder="e.g., I want to be there for my kids... I want to buy a house... I want my life back..."
                   className="w-full h-32 p-4 border-2 border-gray-300 rounded-xl focus:ring-2 focus:ring-blue-500 resize-none"
@@ -8564,6 +8864,7 @@ export default function BeatTheBet() {
               </div>
               <button
                 onClick={() => {
+                  if (isRevisit) { setOnboardingStep(6); return; }
                   if (quickWhyReason.trim()) {
                     const updated = {
                       ...whyImQuitting,
@@ -8576,7 +8877,7 @@ export default function BeatTheBet() {
                 }}
                 className="w-full bg-blue-500 hover:bg-blue-600 text-white rounded-xl py-4 font-bold text-lg transition-colors"
               >
-                {quickWhyReason.trim() ? 'Save & Continue' : 'Skip This Step'}
+                {isRevisit ? 'Continue' : (quickWhyReason.trim() ? 'Save & Continue' : 'Skip This Step')}
               </button>
             </div>
           );
@@ -8627,17 +8928,23 @@ export default function BeatTheBet() {
       <div className="fixed inset-0 bg-gray-900 bg-opacity-90 z-50 flex items-center justify-center p-4">
         <div className="bg-white rounded-2xl shadow-2xl max-w-lg w-full max-h-[90vh] overflow-y-auto">
           <div className="p-8">
-            {/* Progress Bar */}
-            {onboardingStep > 0 && onboardingStep < 6 && (
+            {isRevisit && (
+              <div className="flex items-center justify-between bg-blue-50 border border-blue-200 rounded-lg px-3 py-2 mb-4 text-xs text-blue-800">
+                <span>Viewing the setup guide. Your data won't be changed.</span>
+                <button onClick={completeOnboarding} className="font-semibold underline ml-3">Close</button>
+              </div>
+            )}
+            {/* Progress Bar (QA-00: counter matches the "Step N:" headings, which cover onboarding screens 2-5) */}
+            {onboardingStep > 1 && onboardingStep < 6 && (
               <div className="mb-6">
                 <div className="flex justify-between text-xs text-gray-600 mb-2">
-                  <span>Step {[0,2,3,4,5].indexOf(onboardingStep)+1} of 5</span>
-                  <span>{Math.round(([0,2,3,4,5].indexOf(onboardingStep)+1)/5*100)}%</span>
+                  <span>Step {onboardingStep - 1} of 4</span>
+                  <span>{Math.round((onboardingStep - 1) / 4 * 100)}%</span>
                 </div>
                 <div className="w-full bg-gray-200 rounded-full h-2">
                   <div 
                     className="bg-blue-500 h-2 rounded-full transition-all duration-300"
-                    style={{ width: `${(onboardingStep / 5) * 100}%` }}
+                    style={{ width: `${((onboardingStep - 1) / 4) * 100}%` }}
                   />
                 </div>
               </div>
@@ -9225,10 +9532,7 @@ export default function BeatTheBet() {
                     >
                       <div className="flex items-center justify-between mb-2">
                         <span className="text-sm text-gray-600">
-                          {new Date(entry.date).toLocaleTimeString('en-US', { 
-                            hour: 'numeric', 
-                            minute: '2-digit' 
-                          })}
+                          {formatJournalTime(entry.date)}
                         </span>
                         {entry.mood && <span className="text-xl">{entry.mood}</span>}
                       </div>
@@ -9297,21 +9601,33 @@ export default function BeatTheBet() {
       ...allStructuredPrompts.filter(p => !localFavorites.includes(p.id))
     ];
 
-    const handleSave = () => {
-      if (journalMode === 'open' && !content.trim()) {
-        return;
-      }
-      if (journalMode === 'structured' && Object.keys(responses).length === 0) {
-        return;
-      }
+    // QA-12: Save is only possible with real (non-whitespace) written content in the active mode
+    const canSave = journalMode === 'open'
+      ? content.trim().length > 0
+      : Object.values(responses).some(v => typeof v === 'string' && v.trim().length > 0);
 
-      onSave({
-        mode: journalMode,
-        mood,
-        content: journalMode === 'open' ? content : null,
-        responses: journalMode === 'structured' ? responses : null,
-        date: date.toISOString(),
-      });
+    const handleSave = () => {
+      if (!canSave) return;
+
+      // Keep the chosen calendar day but stamp it with the real time of writing,
+      // so the list view and the detail view show the same creation time (QA-13).
+      const entryDate = new Date(date);
+      const nowTime = new Date();
+      entryDate.setHours(nowTime.getHours(), nowTime.getMinutes(), nowTime.getSeconds(), nowTime.getMilliseconds());
+
+      try {
+        onSave({
+          mode: journalMode,
+          mood,
+          content: journalMode === 'open' ? content : null,
+          responses: journalMode === 'structured' ? responses : null,
+          date: entryDate.toISOString(),
+        });
+      } catch (e) {
+        // Saving failed: stay on the form so nothing the user wrote is lost
+        console.error('Journal save failed:', e);
+        showError('Could not save your entry. Your writing is still here, please try again.');
+      }
     };
 
     return (
@@ -9389,7 +9705,8 @@ export default function BeatTheBet() {
             {/* Save Button */}
             <button
               onClick={handleSave}
-              className="w-full bg-purple-500 hover:bg-purple-600 text-white rounded-xl p-4 font-bold transition-colors"
+              disabled={!canSave}
+              className="w-full bg-purple-500 hover:bg-purple-600 disabled:bg-gray-300 disabled:text-gray-500 disabled:cursor-not-allowed text-white rounded-xl p-4 font-bold transition-colors"
             >
               Save Entry
             </button>
@@ -9410,7 +9727,7 @@ export default function BeatTheBet() {
           <div className="flex items-center justify-between">
             <div>
               <h1 className="text-2xl font-bold">Journal Entry</h1>
-              <p className="text-sm opacity-90">{entry.timestamp}</p>
+              <p className="text-sm opacity-90">{formatJournalDateTime(entry.date || entry.timestamp)}</p>
             </div>
             {entry.mood && <span className="text-4xl">{entry.mood}</span>}
           </div>
@@ -10205,8 +10522,10 @@ export default function BeatTheBet() {
 
   // Settings Page
   const SettingsPage = () => {
-    const [editingUsername, setEditingUsername] = useState(false);
-    const [tempUsername, setTempUsername] = useState(username);
+    const editingUsername = settingsEditingUsername;
+    const setEditingUsername = setSettingsEditingUsername;
+    const tempUsername = settingsTempUsername;
+    const setTempUsername = setSettingsTempUsername;
     const [tempAge, setTempAge] = useState(userAgeRange);
     const [tempCity, setTempCity] = useState(userCity);
     const [editingTimer, setEditingTimer] = useState(false);
@@ -10215,23 +10534,65 @@ export default function BeatTheBet() {
     const [deleteConfirmText, setDeleteConfirmText] = useState('');
     const [deletingAccount, setDeletingAccount] = useState(false);
 
-    const saveUsername = () => {
+    const focusUsernameInput = () => setTimeout(() => {
+      const el = document.getElementById('settings-username');
+      if (el) el.focus();
+    }, 0);
+
+    const saveUsername = async () => {
+      if (settingsSavingUsername) return;
       const trimmed = tempUsername.trim();
-      if (!trimmed || trimmed.length < 2) {
-        showError('Username must be at least 2 characters');
+      let err = '';
+      if (trimmed.length < 2) err = 'Username must be at least 2 characters';
+      else if (trimmed.length > 30) err = 'Username must be 30 characters or less';
+      if (err) {
+        // Inline error only (no toast) so it appears once; editor stays open for correction
+        setSettingsUsernameError(err);
+        focusUsernameInput();
         return;
       }
-      setUsername(trimmed);
-      localStorage.setItem('username', trimmed);
-      localStorage.setItem('chatUsername', trimmed);
-      setHasSetUsername(true);
-      // Also update currentUser
-      const updatedUser = { ...currentUser, username: trimmed };
-      setCurrentUser(updatedUser);
-      localStorage.setItem('currentUser', JSON.stringify(updatedUser));
-      syncProfileToSupabase({ username: trimmed }).catch(() => {});
-      showSuccess('Username updated!');
-      setEditingUsername(false);
+      if (trimmed === username) {
+        setSettingsUsernameError('');
+        setEditingUsername(false);
+        return;
+      }
+      setSettingsSavingUsername(true);
+      try {
+        const session = await supabase.getValidSession();
+        if (!session) throw new Error('not signed in');
+        const res = await fetch(`${SUPABASE_URL}/rest/v1/profiles?id=eq.${session.user.id}`, {
+          method: 'PATCH',
+          headers: {
+            'apikey': SUPABASE_ANON_KEY,
+            'Authorization': `Bearer ${session.access_token}`,
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify({ username: trimmed, updated_at: new Date().toISOString() })
+        });
+        if (!res.ok) {
+          const errText = await res.text().catch(() => '');
+          console.error('saveUsername failed:', res.status, errText);
+          setSettingsUsernameError(errText.includes('23505') ? 'That username is already taken' : "Couldn't save your username. Please try again.");
+          focusUsernameInput();
+          return;
+        }
+        // Only now (server confirmed) change the local username
+        setUsername(trimmed);
+        localStorage.setItem('username', trimmed);
+        localStorage.setItem('chatUsername', trimmed);
+        setHasSetUsername(true);
+        const updatedUser = { ...currentUser, username: trimmed };
+        setCurrentUser(updatedUser);
+        localStorage.setItem('currentUser', JSON.stringify(updatedUser));
+        setSettingsUsernameError('');
+        setEditingUsername(false);
+        showSuccess('Username updated!');
+      } catch (e) {
+        setSettingsUsernameError("Couldn't save your username. Please try again.");
+        focusUsernameInput();
+      } finally {
+        setSettingsSavingUsername(false);
+      }
     };
 
     const saveAge = (age) => {
@@ -10259,83 +10620,142 @@ export default function BeatTheBet() {
       }
     };
 
-    const exportData = () => {
-      const daysClean = getDaysClean();
-      const totalSaved = (dailyGamblingSpend * daysClean).toFixed(2);
-      
-      const data = {
-        // Profile
-        profile: {
-          username,
-          ageRange: userAgeRange,
-          city: userCity,
-          startDate: startDate.toISOString(),
-          daysClean: daysClean,
-          level,
-          points
-        },
-        
-        // Summary Stats
-        summary: {
-          totalDaysClean: daysClean,
-          totalMoneySaved: parseFloat(totalSaved),
-          dailySpend: dailyGamblingSpend,
-          journalEntries: journalEntries.length,
-          badgesEarned: earnedBadges.length,
-          currentLevel: level,
-          totalPoints: points
-        },
+    // QA-02: full export of everything stored for this user (local state + server tables).
+    const exportData = async () => {
+      if (exporting) return;
+      setExporting(true);
+      try {
+        const session = await supabase.getValidSession();
+        if (!session) { showError('Please sign in again to export your data.'); return; }
+        const uid = session.user.id;
+        const headers = { 'apikey': SUPABASE_ANON_KEY, 'Authorization': `Bearer ${session.access_token}` };
+        const PAGE = 1000;
 
-        // Detailed Data
-        journalEntries: journalEntries.map(entry => ({
-          date: entry.date,
-          mode: entry.mode,
-          mood: entry.mood,
-          content: entry.content,
-          responses: entry.responses
-        })),
+        // Paginated fetch for one table. Returns { rows } or { error }.
+        const fetchAll = async (table, filter, select = '*', orderCandidates = ['created_at.asc,id.asc', 'id.asc', 'created_at.asc', '']) => {
+          for (const order of orderCandidates) {
+            const rows = [];
+            let ok = true;
+            for (let offset = 0; ; offset += PAGE) {
+              const url = `${SUPABASE_URL}/rest/v1/${table}?${filter}&select=${select}${order ? `&order=${order}` : ''}&limit=${PAGE}&offset=${offset}`;
+              const res = await fetch(url, { headers });
+              if (!res.ok) { ok = false; break; }
+              const page = await res.json();
+              if (!Array.isArray(page)) { ok = false; break; }
+              rows.push(...page);
+              if (page.length < PAGE) break;
+            }
+            if (ok) return { rows };
+          }
+          return { error: `Could not read table "${table}"` };
+        };
 
-        earnedBadges: earnedBadges,
+        const retentionCutoff = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString();
+        const tables = [
+          ['profiles', `id=eq.${uid}`],
+          ['user_settings', `user_id=eq.${uid}`],
+          ['journal_entries', `user_id=eq.${uid}`],
+          ['why_quitting', `user_id=eq.${uid}`],
+          ['earned_badges', `user_id=eq.${uid}`],
+          ['activity_log', `user_id=eq.${uid}`],
+          ['liabilities', `user_id=eq.${uid}`],
+          ['app_events', `user_id=eq.${uid}`],
+          ['challenge_preferences', `user_id=eq.${uid}`],
+          ['daily_challenge_sets', `user_id=eq.${uid}`],
+          ['user_challenge_history', `user_id=eq.${uid}`],
+          ['user_challenge_journeys', `user_id=eq.${uid}`],
+          ['saved_challenges', `user_id=eq.${uid}`]
+        ];
 
-        activityLog: activityLog.map(a => ({
-          type: a.type,
-          duration: a.duration,
-          date: a.date
-        })),
-        
-        whyImQuitting: whyImQuitting,
-        
-        // Analytics
-        analytics: {
-          toolUsage,
-          appOpenTimestamps,
-          panicButtonTimestamps,
-          paydaySettings
-        },
-        
-        // Music preferences
-        musicPreferences: {
-          seedArtists,
-          artistFeedback
-        },
-        
-        // Metadata
-        exportInfo: {
-          exportDate: new Date().toISOString(),
-          appVersion: '1.0.0',
-          dataFormat: 'beat-the-bet-backup'
+        const serverData = {};
+        const unavailable = [];
+        for (const [table, filter] of tables) {
+          const r = await fetchAll(table, filter);
+          if (r.rows) serverData[table] = r.rows; else unavailable.push(table);
         }
-      };
+        // Community messages written by this user that are still inside the 30-day retention window.
+        // Only the user's own text is exported; moderation fields are internal and excluded.
+        const msgs = await fetchAll('messages', `user_id=eq.${uid}&created_at=gte.${retentionCutoff}`, 'id,room,username,message,created_at');
+        if (msgs.rows) serverData.messages = msgs.rows; else unavailable.push('messages');
 
-      const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
-      const url = URL.createObjectURL(blob);
-      const link = document.createElement('a');
-      link.href = url;
-      const filename = `beat-the-bet-backup-${username || 'user'}-${new Date().toISOString().split('T')[0]}.json`;
-      link.download = filename;
-      link.click();
-      URL.revokeObjectURL(url);
-      showSuccess('Data exported successfully! 📥');
+        // Photos: give each why-quitting photo a download link (valid 7 days)
+        const wq = serverData.why_quitting?.[0];
+        if (wq && Array.isArray(wq.reasons)) {
+          wq.reasons = await Promise.all(wq.reasons.map(async (reason) => {
+            if (reason && reason.type === 'photo' && reason.storagePath) {
+              try {
+                const signRes = await fetch(`${SUPABASE_URL}/storage/v1/object/sign/why-quitting-photos/${reason.storagePath}`, {
+                  method: 'POST',
+                  headers: { ...headers, 'Content-Type': 'application/json' },
+                  body: JSON.stringify({ expiresIn: 604800 })
+                });
+                if (signRes.ok) {
+                  const d = await signRes.json();
+                  return { ...reason, downloadUrl: `${SUPABASE_URL}/storage/v1${d.signedURL}`, downloadUrlExpiresInDays: 7 };
+                }
+              } catch (e) {}
+            }
+            return reason;
+          }));
+        }
+
+        const daysClean = getDaysClean();
+        const totalSaved = (dailyGamblingSpend * daysClean).toFixed(2);
+        const data = {
+          exportInfo: {
+            exportDate: new Date().toISOString(),
+            appVersion: '1.0.0',
+            dataFormat: 'beat-the-bet-backup',
+            schemaVersion: '2.0',
+            restorable: false,
+            note: 'This file is a copy of your data for your own records. Beat the Bet cannot currently import it back.',
+            timestampsFormat: 'ISO 8601 (UTC) unless a field says otherwise',
+            tablesUnavailable: unavailable,
+            exclusions: [
+              'Passwords, sign-in sessions and security tokens are never exported.',
+              'Messages older than 30 days are permanently deleted and cannot be exported.',
+              'Other users\' messages and data are not included.',
+              'Internal moderation records and administrator information are not included.',
+              'Shared reference content (the challenge catalogue, journey definitions) is referenced by ID only.'
+            ]
+          },
+          profile: {
+            username, ageRange: userAgeRange, city: userCity,
+            startDate: startDate.toISOString(), daysClean, level, points
+          },
+          summary: {
+            totalDaysClean: daysClean, totalMoneySaved: parseFloat(totalSaved), dailySpend: dailyGamblingSpend,
+            journalEntries: journalEntries.length, badgesEarned: earnedBadges.length, currentLevel: level, totalPoints: points
+          },
+          journalEntries: journalEntries.map(entry => ({
+            date: entry.date, mode: entry.mode, mood: entry.mood, content: entry.content, responses: entry.responses
+          })),
+          earnedBadges,
+          activityLog: activityLog.map(a => ({ type: a.type, duration: a.duration, date: a.date })),
+          whyImQuitting,
+          streaks: { currentDays: daysClean, relapses: streakData?.relapses || [] },
+          notificationPreferences: notificationPrefs,
+          analytics: { toolUsage, appOpenTimestamps, panicButtonTimestamps, paydaySettings },
+          musicPreferences: { seedArtists, artistFeedback, favoriteArtists },
+          // Complete server-side records for this account, one list per table
+          serverData
+        };
+
+        const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+        const url = URL.createObjectURL(blob);
+        const link = document.createElement('a');
+        link.href = url;
+        link.download = `beat-the-bet-backup-${username || 'user'}-${new Date().toISOString().split('T')[0]}.json`;
+        link.click();
+        URL.revokeObjectURL(url);
+        if (unavailable.length) showError(`Export finished, but some data could not be read: ${unavailable.join(', ')}.`);
+        else showSuccess('Data exported successfully! 📥');
+      } catch (e) {
+        console.error('exportData failed:', e);
+        showError('Export failed. Please try again.');
+      } finally {
+        setExporting(false);
+      }
     };
 
     const exportSummaryReport = () => {
@@ -10445,23 +10865,31 @@ Keep going! Every day counts. 💪
                 <div>
                   <label className="block text-sm font-semibold text-gray-700 mb-2">Username</label>
                   {editingUsername ? (
+                    <div>
                     <div className="flex gap-2">
                       <input
+                        id="settings-username"
                         type="text"
+                        autoFocus
                         value={tempUsername}
-                        onChange={(e) => setTempUsername(e.target.value)}
-                        className="flex-1 px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                        onChange={(e) => { setTempUsername(e.target.value); if (settingsUsernameError) setSettingsUsernameError(''); }}
+                        onKeyDown={(e) => { if (e.key === 'Enter') saveUsername(); }}
+                        aria-invalid={!!settingsUsernameError}
+                        aria-describedby={settingsUsernameError ? 'settings-username-error' : undefined}
+                        className={`flex-1 px-3 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent ${settingsUsernameError ? 'border-red-500' : 'border-gray-300'}`}
                         placeholder="Enter username"
                       />
                       <button
                         onClick={saveUsername}
-                        className="bg-blue-500 hover:bg-blue-600 text-white px-4 py-2 rounded-lg font-semibold"
+                        disabled={settingsSavingUsername}
+                        className="bg-blue-500 hover:bg-blue-600 disabled:opacity-60 text-white px-4 py-2 rounded-lg font-semibold"
                       >
-                        Save
+                        {settingsSavingUsername ? 'Saving...' : 'Save'}
                       </button>
                       <button
                         onClick={() => {
                           setTempUsername(username);
+                          setSettingsUsernameError('');
                           setEditingUsername(false);
                         }}
                         className="bg-gray-200 hover:bg-gray-300 text-gray-700 px-4 py-2 rounded-lg font-semibold"
@@ -10469,11 +10897,15 @@ Keep going! Every day counts. 💪
                         Cancel
                       </button>
                     </div>
+                    {settingsUsernameError && (
+                      <p id="settings-username-error" role="alert" className="text-sm text-red-600 mt-2">{settingsUsernameError}</p>
+                    )}
+                    </div>
                   ) : (
                     <div className="flex items-center justify-between">
                       <span className="text-gray-900 font-medium">{username}</span>
                       <button
-                        onClick={() => setEditingUsername(true)}
+                        onClick={() => { setTempUsername(username); setSettingsUsernameError(''); setEditingUsername(true); }}
                         className="text-blue-600 hover:text-blue-700 text-sm font-semibold"
                       >
                         Edit
@@ -10524,35 +10956,35 @@ Keep going! Every day counts. 💪
                 <div className="flex items-center justify-between">
                   <div>
                     <p className="font-semibold text-gray-800">Daily Check-In Reminder</p>
-                    <p className="text-xs text-gray-600">Remind me to journal daily</p>
+                    <p className="text-xs text-gray-600">Remind me to journal daily (reminder delivery not yet available)</p>
                   </div>
                   <label className="relative inline-flex items-center cursor-pointer">
-                    <input type="checkbox" className="sr-only peer" defaultChecked />
+                    <input type="checkbox" className="sr-only peer" aria-label="Daily Check-In Reminder" checked={!!notificationPrefs.dailyCheckIn} disabled={!!savingNotifKey} onChange={(e) => updateNotificationPref('dailyCheckIn', e.target.checked)} />
                     <div className="w-11 h-6 bg-gray-200 peer-focus:ring-4 peer-focus:ring-blue-300 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-blue-600"></div>
                   </label>
                 </div>
                 <div className="flex items-center justify-between">
                   <div>
                     <p className="font-semibold text-gray-800">Payday Alerts</p>
-                    <p className="text-xs text-gray-600">Alert me on payday</p>
+                    <p className="text-xs text-gray-600">Show a payday alert in the app on payday</p>
                   </div>
                   <label className="relative inline-flex items-center cursor-pointer">
-                    <input type="checkbox" className="sr-only peer" defaultChecked />
+                    <input type="checkbox" className="sr-only peer" aria-label="Payday Alerts" checked={!!notificationPrefs.paydayAlerts} disabled={!!savingNotifKey} onChange={(e) => updateNotificationPref('paydayAlerts', e.target.checked)} />
                     <div className="w-11 h-6 bg-gray-200 peer-focus:ring-4 peer-focus:ring-blue-300 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-blue-600"></div>
                   </label>
                 </div>
                 <div className="flex items-center justify-between">
                   <div>
                     <p className="font-semibold text-gray-800">Pattern Alerts</p>
-                    <p className="text-xs text-gray-600">Warn me during risky times</p>
+                    <p className="text-xs text-gray-600">Show a warning in the app during risky times</p>
                   </div>
                   <label className="relative inline-flex items-center cursor-pointer">
-                    <input type="checkbox" className="sr-only peer" defaultChecked />
+                    <input type="checkbox" className="sr-only peer" aria-label="Pattern Alerts" checked={!!notificationPrefs.patternAlerts} disabled={!!savingNotifKey} onChange={(e) => updateNotificationPref('patternAlerts', e.target.checked)} />
                     <div className="w-11 h-6 bg-gray-200 peer-focus:ring-4 peer-focus:ring-blue-300 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-blue-600"></div>
                   </label>
                 </div>
                 <p className="text-xs text-gray-500 pt-2">
-                  Note: Push notifications require app installation. These toggles will be functional after backend setup.
+                  Note: Push and email notifications are not available yet. Payday and Pattern alerts appear inside the app only. Your choices are saved to your account.
                 </p>
               </div>
             </div>
@@ -10565,10 +10997,11 @@ Keep going! Every day counts. 💪
               <div className="p-5 space-y-3">
                 <button
                   onClick={exportData}
-                  className="w-full bg-blue-500 hover:bg-blue-600 text-white rounded-lg py-3 font-semibold flex items-center justify-center gap-2 transition-colors"
+                  disabled={exporting}
+                  className="w-full bg-blue-500 hover:bg-blue-600 disabled:opacity-60 text-white rounded-lg py-3 font-semibold flex items-center justify-center gap-2 transition-colors"
                 >
                   <Download className="w-5 h-5" />
-                  Export Full Backup
+                  {exporting ? 'Preparing export...' : 'Export Full Backup'}
                 </button>
                 <p className="text-xs text-gray-600">
                   Download all your data as JSON for complete backup
@@ -10633,9 +11066,9 @@ Keep going! Every day counts. 💪
 
                 <button
                   onClick={() => {
-                    setHasCompletedOnboarding(false);
+                    // QA-00: view-only revisit. Do NOT reset onboarding status or any stored data.
                     setOnboardingStep(0);
-                    localStorage.removeItem('hasCompletedOnboarding');
+                    setOnboardingRevisit(true);
                   }}
                   className="w-full bg-gray-200 hover:bg-gray-300 text-gray-800 rounded-lg py-3 font-semibold transition-colors"
                 >
@@ -11170,6 +11603,13 @@ Keep going! Every day counts. 💪
     const passwordChecks = getPasswordStrength();
 
     const [signupError, setSignupError] = React.useState('');
+    // QA-20: policy pages open over the form without unmounting it, so typed details are kept
+    const [legalView, setLegalView] = React.useState(null); // null | 'terms' | 'privacy'
+    const closeLegalView = () => {
+      const returnTo = legalView === 'terms' ? 'signup-terms-link' : 'signup-privacy-link';
+      setLegalView(null);
+      setTimeout(() => { const el = document.getElementById(returnTo); if (el) el.focus(); }, 0);
+    };
 
     const handleSignUp = async () => {
       setErrors({});
@@ -11206,6 +11646,9 @@ Keep going! Every day counts. 💪
     };
 
     // No full-screen loading swap
+
+    if (legalView === 'terms') return <TermsOfServicePage onBack={closeLegalView} />;
+    if (legalView === 'privacy') return <PrivacyPolicyPage onBack={closeLegalView} />;
 
     return (
       <div className="min-h-screen bg-gray-50 flex flex-col p-6">
@@ -11330,6 +11773,16 @@ Keep going! Every day counts. 💪
               </div>
             </div>
           </div>
+        </div>
+
+        <div className="text-center text-xs text-gray-500 pt-6 pb-2">
+          <button id="signup-terms-link" type="button" onClick={() => setLegalView('terms')} className="underline hover:text-gray-700">
+            Terms of Service
+          </button>
+          <span className="mx-2" aria-hidden="true">·</span>
+          <button id="signup-privacy-link" type="button" onClick={() => setLegalView('privacy')} className="underline hover:text-gray-700">
+            Privacy Policy
+          </button>
         </div>
       </div>
     );
@@ -11727,7 +12180,7 @@ Keep going! Every day counts. 💪
   return (
     <div className="relative min-h-screen">
       {/* Show onboarding if not completed */}
-      {!hasCompletedOnboarding && <OnboardingFlow />}
+      {(!hasCompletedOnboarding || onboardingRevisit) && <OnboardingFlow />}
       
       {activeTab === 'home' && <HomeTab />}
       {activeTab === 'resources' && ResourcesTab()}
@@ -11764,23 +12217,6 @@ Keep going! Every day counts. 💪
         >
           <div className="bg-gradient-to-r from-red-500 to-red-600 text-white px-6 py-3 rounded-xl shadow-2xl flex items-center gap-2 max-w-md">
             <svg className="w-5 h-5 flex-shrink-0" fill="currentColor" viewBox="0 0 20 20">
-              <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM8.707 7.293a1 1 0 00-1.414 1.414L8.586 10l-1.293 1.293a1 1 0 101.414 1.414L10 11.414l1.293 1.293a1 1 0 001.414-1.414L11.414 10l1.293-1.293a1 1 0 00-1.414-1.414L10 8.586 8.707 7.293z" clipRule="evenodd" />
-            </svg>
-            <span className="font-semibold">{errorMessage}</span>
-          </div>
-        </div>
-      )}
-
-      {/* Error Toast */}
-      {showErrorToast && (
-        <div 
-          className="fixed top-4 left-1/2 transform -translate-x-1/2 z-50 transition-all duration-300"
-          style={{
-            animation: 'slideDown 0.3s ease-out'
-          }}
-        >
-          <div className="bg-gradient-to-r from-red-500 to-red-600 text-white px-6 py-3 rounded-xl shadow-2xl flex items-center gap-2">
-            <svg className="w-5 h-5" fill="currentColor" viewBox="0 0 20 20">
               <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM8.707 7.293a1 1 0 00-1.414 1.414L8.586 10l-1.293 1.293a1 1 0 101.414 1.414L10 11.414l1.293 1.293a1 1 0 001.414-1.414L11.414 10l1.293-1.293a1 1 0 00-1.414-1.414L10 8.586 8.707 7.293z" clipRule="evenodd" />
             </svg>
             <span className="font-semibold">{errorMessage}</span>
