@@ -34,9 +34,42 @@
        `supabase` REST wrapper defined inside beat-the-bet.jsx. -->
   <script src="https://unpkg.com/@supabase/supabase-js@2"></script>
   <script>
+    // Environment switch. Production data is only ever used on the production hostnames listed here.
+    // Every other hostname (Vercel previews, the staging site, local servers) uses the STAGING project.
+    // Until the staging project's details are filled in below, non-production hosts talk to NO database at all
+    // (they never fall back to production).
+    (function () {
+      var PROD = {
+        url: 'https://emrpkubjspydnbrittuy.supabase.co',
+        key: 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImVtcnBrdWJqc3B5ZG5icml0dHV5Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3Nzk2NTE1MjQsImV4cCI6MjA5NTIyNzUyNH0.wyrwYfXyOZgdS3NnK7z-kTU-KwbfOH_TF1vv6CsNCmI'
+      };
+      var PROD_HOSTS = ['btb1.vercel.app', 'beatthebet.com.au', 'www.beatthebet.com.au'];
+      var STAGING = { url: '', key: '' }; // fill in once the staging Supabase project exists
+      var isProd = PROD_HOSTS.indexOf(location.hostname) !== -1;
+      var cfg = isProd ? PROD : STAGING;
+      var configured = !!(cfg.url && cfg.key);
+      window.BTB_ENV = {
+        isProd: isProd,
+        configured: configured,
+        url: configured ? cfg.url : 'https://staging-not-configured.invalid',
+        key: configured ? cfg.key : 'staging-not-configured'
+      };
+      if (!isProd) {
+        document.addEventListener('DOMContentLoaded', function () {
+          var bar = document.createElement('div');
+          bar.setAttribute('role', 'status');
+          bar.textContent = configured ? 'STAGING - test data only' : 'STAGING - database not set up yet';
+          bar.style.cssText = 'position:fixed;top:0;left:0;right:0;z-index:100000;height:16px;line-height:16px;text-align:center;font:600 11px sans-serif;background:#f59e0b;color:#111;pointer-events:none;';
+          document.body.appendChild(bar);
+        });
+      }
+    })();
+  </script>
+
+  <script>
     window.supabaseRealtimeClient = window.supabase.createClient(
-      'https://emrpkubjspydnbrittuy.supabase.co',
-      'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImVtcnBrdWJqc3B5ZG5icml0dHV5Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3Nzk2NTE1MjQsImV4cCI6MjA5NTIyNzUyNH0.wyrwYfXyOZgdS3NnK7z-kTU-KwbfOH_TF1vv6CsNCmI'
+      window.BTB_ENV.url,
+      window.BTB_ENV.key
     );
     // The CDN build assigns its client factory to window.supabase, which the
     // app's own script (beat-the-bet.jsx) later overwrites with its own

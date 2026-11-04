@@ -5,8 +5,15 @@ const { useState, useEffect } = React;
 const { Clock, AlertCircle, Phone, MapPin, LifeBuoy, Home, Info, Sparkles, TrendingUp, DollarSign, ShoppingBag, BarChart3, Lock, ArrowLeft, ChevronRight, Users, User, Download, X } = lucide;
 
 // Supabase Configuration
-const SUPABASE_URL = 'https://emrpkubjspydnbrittuy.supabase.co';
-const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImVtcnBrdWJqc3B5ZG5icml0dHV5Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3Nzk2NTE1MjQsImV4cCI6MjA5NTIyNzUyNH0.wyrwYfXyOZgdS3NnK7z-kTU-KwbfOH_TF1vv6CsNCmI';
+// index.html sets window.BTB_ENV by hostname (production vs staging). If an older index.html is in use,
+// production hostnames still get the production project and every other hostname gets NO database
+// (it never falls back to production).
+const BTB_PROD_HOSTS = ['btb1.vercel.app', 'beatthebet.com.au', 'www.beatthebet.com.au'];
+const BTB_ENV = window.BTB_ENV || (BTB_PROD_HOSTS.includes(location.hostname)
+  ? { isProd: true, configured: true, url: 'https://emrpkubjspydnbrittuy.supabase.co', key: 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImVtcnBrdWJqc3B5ZG5icml0dHV5Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3Nzk2NTE1MjQsImV4cCI6MjA5NTIyNzUyNH0.wyrwYfXyOZgdS3NnK7z-kTU-KwbfOH_TF1vv6CsNCmI' }
+  : { isProd: false, configured: false, url: 'https://staging-not-configured.invalid', key: 'staging-not-configured' });
+const SUPABASE_URL = BTB_ENV.url;
+const SUPABASE_ANON_KEY = BTB_ENV.key;
 
 // ============================================================
 // Supabase Client
@@ -712,6 +719,8 @@ export default function BeatTheBet() {
 
   const clearUserScopedStorage = () => {
     USER_SCOPED_STORAGE_KEYS.forEach(k => localStorage.removeItem(k));
+    // QA-05: don't carry a previous account's challenge count into the next session
+    try { setChallengeCompletions([]); challengeCompletionsFetchRef.current = { at: 0, key: '' }; } catch (e) {}
   };
 
   // Admin access
@@ -894,6 +903,9 @@ export default function BeatTheBet() {
   const [currentBoredActivity, setCurrentBoredActivity] = useState('');
   
   // Activity Challenges State
+  // QA-05: lifted to BeatTheBet scope so it survives the nested Streak Analytics component remounting
+  const [challengeCompletions, setChallengeCompletions] = useState([]);
+  const challengeCompletionsFetchRef = React.useRef({ at: 0, key: '' });
   const [activityLog, setActivityLog] = useState(() => {
     const saved = localStorage.getItem('activityLog');
     return saved ? JSON.parse(saved) : [];
@@ -937,6 +949,122 @@ export default function BeatTheBet() {
   });
   const [recommendedArtists, setRecommendedArtists] = useState([]);
   const [currentRecommendationIndex, setCurrentRecommendationIndex] = useState(0);
+  // Which saved artist the Listen chooser is open for (lifted so it survives nested-component remounts)
+  const [musicListenArtist, setMusicListenArtist] = useState(null);
+  const [musicViewMode, setMusicViewMode] = useState('discover');
+
+  // Artist descriptions from Last.fm (artist.getinfo bio). Cleaned to the first one or two complete
+  // sentences and cached on this device so each artist is only looked up once.
+  const ARTIST_BIO_HIT_TTL = 30 * 24 * 60 * 60 * 1000;
+  const ARTIST_BIO_MISS_TTL = 7 * 24 * 60 * 60 * 1000;
+  const [artistBios, setArtistBios] = useState(() => {
+    try { return JSON.parse(localStorage.getItem('artistBioCache') || '{}') || {}; } catch (e) { return {}; }
+  });
+  const artistBiosRef = React.useRef(artistBios);
+  artistBiosRef.current = artistBios;
+  const artistBioInflight = React.useRef(new Set());
+  const artistBioFailedAt = React.useRef({});
+  const cleanArtistBio = (html) => {
+    if (!html || typeof html !== 'string') return '';
+    let t = html.replace(/<a\b[^>]*>[\s\S]*?<\/a>/gi, ' ').replace(/<[^>]+>/g, ' ');
+    try { const ta = document.createElement('textarea'); ta.innerHTML = t; t = ta.value; } catch (e) {}
+    t = t.replace(/\s+/g, ' ').trim();
+    // Don't treat initials/abbreviations (J. Cole, U.S., Dr., vs.) as the end of a sentence
+    t = t.replace(/\b([A-Z])\./g, '$1\u0001').replace(/\b(Dr|Mr|Mrs|Ms|Jr|Sr|St|vs|feat|ft|Inc|Ltd|No)\./g, '$1\u0001');
+    const sentences = (t.match(/[^.!?]+[.!?]+(?=\s|$)/g) || []).map(x => x.replace(/\u0001/g, '.'));
+    let out = '';
+    for (const sent of sentences.slice(0, 2)) {
+      const next = (out ? out + ' ' : '') + sent.trim();
+      if (next.length > 320 && out) break;
+      out = next;
+    }
+    if (out.length > 360) out = '';
+    // Last.fm sometimes returns a "several artists share this name" notice instead of a bio; hide those,
+    // and anything that starts mid-sentence.
+    if (!/^[A-Z0-9"'“(]/.test(out) || /^there (are|have been|were|is|exist)\b|(artists?|bands?|groups?|acts?|musicians?) (with|named|using|sharing|that (have )?used|who (have )?used) (this|the same|the) name|used the name|using the name|tracked as|following are|listed in order|disambiguation|please see/i.test(out)) out = '';
+    return out.length >= 60 ? out : '';
+  };
+  const loadArtistBio = async (name) => {
+    if (!name) return;
+    const key = name.toLowerCase();
+    const cached = artistBiosRef.current[key];
+    const ttl = cached && cached.text ? ARTIST_BIO_HIT_TTL : ARTIST_BIO_MISS_TTL;
+    if (cached && Date.now() - (cached.t || 0) < ttl) return;
+    if (artistBioInflight.current.has(key)) return;
+    if (Date.now() - (artistBioFailedAt.current[key] || 0) < 60000) return;
+    artistBioInflight.current.add(key);
+    try {
+      const r = await fetch(`https://ws.audioscrobbler.com/2.0/?method=artist.getinfo&artist=${encodeURIComponent(name)}&api_key=bf998e6a6a406abca0544b6d74c51c40&format=json&autocorrect=1&lang=en`);
+      if (!r.ok) throw new Error('bad status');
+      const d = await r.json();
+      let entry;
+      if (d && d.error) { // e.g. artist not found: remember it as "no description"
+        entry = { text: '', url: '', t: Date.now() };
+      } else {
+        const text = cleanArtistBio(d && d.artist && d.artist.bio && d.artist.bio.summary);
+        entry = { text, url: (d && d.artist && d.artist.url) || '', t: Date.now() };
+      }
+      let next = { ...artistBiosRef.current, [key]: entry };
+      const keys = Object.keys(next);
+      if (keys.length > 300) { // keep the cache small: drop the oldest entries
+        keys.sort((a, b) => (next[a].t || 0) - (next[b].t || 0)).slice(0, keys.length - 300).forEach(k => delete next[k]);
+      }
+      artistBiosRef.current = next;
+      try { localStorage.setItem('artistBioCache', JSON.stringify(next)); } catch (e) {}
+      setArtistBios(next);
+    } catch (e) {
+      artistBioFailedAt.current[key] = Date.now(); // network problem: try again later, don't cache as "none"
+    } finally {
+      artistBioInflight.current.delete(key);
+    }
+  };
+  const ArtistBio = ({ name }) => {
+    const entry = artistBios[(name || '').toLowerCase()];
+    useEffect(() => { loadArtistBio(name); }, [name]);
+    if (!entry || !entry.text) return null;
+    return (
+      <p className="text-xs text-gray-600 mt-2 mb-2 leading-relaxed text-left">
+        {entry.text}{' '}
+        {entry.url && (
+          <a href={entry.url} target="_blank" rel="noopener noreferrer" className="text-gray-400 underline whitespace-nowrap">Source: Last.fm</a>
+        )}
+      </p>
+    );
+  };
+  // Set when the desktop app could not be opened and the browser blocked the web fallback tab
+  const [musicListenFallback, setMusicListenFallback] = useState(null);
+  const closeMusicListen = () => { setMusicListenArtist(null); setMusicListenFallback(null); };
+  // Opens a music service. Phones/tablets: the normal https link, which the OS hands to the installed app
+  // (universal/app link) or shows on the web if it isn't installed. Computers: try the desktop app first,
+  // and if nothing took focus within a moment, open the website instead.
+  const openMusicService = (e, svc) => {
+    const ua = navigator.userAgent || '';
+    const isMobile = /Android|iPhone|iPad|iPod/i.test(ua) || (/Macintosh/i.test(ua) && navigator.maxTouchPoints > 1);
+    if (isMobile || !svc.appUrl) { closeMusicListen(); return; } // let the link do its default
+    e.preventDefault();
+    let appTookFocus = false;
+    const onLeave = () => { appTookFocus = true; };
+    window.addEventListener('blur', onLeave);
+    document.addEventListener('visibilitychange', onLeave);
+    try {
+      const a = document.createElement('a');
+      a.href = svc.appUrl; a.style.display = 'none';
+      document.body.appendChild(a); a.click(); a.remove();
+    } catch (err) { /* fall through to the website */ }
+    setTimeout(() => {
+      window.removeEventListener('blur', onLeave);
+      document.removeEventListener('visibilitychange', onLeave);
+      if (appTookFocus) { closeMusicListen(); return; }
+      const w = window.open(svc.url, '_blank', 'noopener,noreferrer');
+      if (w) closeMusicListen(); else setMusicListenFallback(svc.url);
+    }, 1200);
+  };
+  useEffect(() => {
+    if (!musicListenArtist) return;
+    const onKey = (e) => { if (e.key === 'Escape') { setMusicListenArtist(null); setMusicListenFallback(null); } };
+    document.addEventListener('keydown', onKey);
+    return () => document.removeEventListener('keydown', onKey);
+  }, [musicListenArtist]);
   const [savedForLater, setSavedForLater] = useState(() => {
     const saved = localStorage.getItem('savedForLater');
     return saved ? JSON.parse(saved) : [];
@@ -1231,6 +1359,11 @@ export default function BeatTheBet() {
       if (p.start_date) {
         setStartDate(new Date(p.start_date));
         localStorage.setItem('startDate', new Date(p.start_date).toISOString());
+        // An account that already has a saved start date has been through setup before.
+        // The onboarding flag is device-only, so restore it here so that logging in on a
+        // new browser/device doesn't re-run first-time onboarding (which overwrites start_date).
+        setHasCompletedOnboarding(true);
+        localStorage.setItem('hasCompletedOnboarding', 'true');
       }
       if (p.age_range) {
         setUserAgeRange(p.age_range);
@@ -1795,7 +1928,7 @@ export default function BeatTheBet() {
     
     if (isRiskyDay || isRiskyHour) {
       return {
-        message: `Heads up - you typically get triggered around this time (${patterns.riskiestTimeCategory}${isRiskyDay ? ` on ${patterns.riskiestDay}s` : ''}). The urge will pass in 15-20 minutes.`,
+        message: `Heads up - you typically get triggered around this time (${patterns.riskiestTimeCategory}${isRiskyDay ? ` on ${patterns.riskiestDay}s` : ''}). Urges come, but they also go. Doing something to take your mind off it, like a short walk or a call to someone you trust, can help it pass.`,
         severity: 'warning'
       };
     }
@@ -2042,7 +2175,7 @@ export default function BeatTheBet() {
       "You're stronger than the urge.",
       "One day at a time.",
       "Recovery is worth fighting for.",
-      "The urge will pass. It always does.",
+      "Urges come and go. You can ride this one out.",
       "You're building a better future.",
       "Every clean day is a gift to yourself.",
       "Chase the dopamine that builds you up, not the kind that tears you down.",
@@ -2409,203 +2542,154 @@ export default function BeatTheBet() {
     </div>
   );
 
+  // Urgent-help screen (QA-07/08): encouragement, helpline, the user's own reasons, a bedtime reflection,
+  // and three specific quick activities. No typing required before help is available.
+  const URGENT_HELP_ACTIVITIES = [
+    { icon: '🚶', title: 'Walk once around the block', detail: 'Count 20 trees, houses or letterboxes as you go.', time: '10 min' },
+    { icon: '🏋️', title: 'Do 20 squats', detail: 'Rest for 30 seconds, then do 10 more.', time: '3 min' },
+    { icon: '💪', title: 'Do 15 push-ups', detail: 'Wall or knee push-ups count.', time: '2 min' },
+    { icon: '☕', title: 'Make a hot drink and drink it slowly', detail: 'Keep your phone in another room until it is finished.', time: '10 min' },
+    { icon: '🌬️', title: 'Breathe in for 4, out for 6', detail: 'Repeat ten times in a row.', time: '3 min' },
+    { icon: '💬', title: 'Text one person you trust', detail: 'Something simple like "Hey, have you got time for a chat later?"', time: '2 min' },
+    { icon: '🍽️', title: 'Wash the dishes or wipe the kitchen bench', detail: 'Finish the whole job before you do anything else.', time: '10 min' },
+    { icon: '✍️', title: 'Write down three things you are grateful for', detail: 'Make them specific to today.', time: '3 min' },
+    { icon: '🗄️', title: 'Tidy one drawer or one shelf', detail: 'Empty it, wipe it down, put back only what you use.', time: '10 min' },
+    { icon: '🎵', title: 'Play one song you love, start to finish', detail: 'Move around while it plays.', time: '4 min' },
+    { icon: '🌿', title: 'Step outside and name five green things', detail: 'Plants, leaves, a lawn, anything green.', time: '5 min' },
+    { icon: '💧', title: 'Drink a full glass of water and eat a piece of fruit', detail: 'Sit down while you do it.', time: '5 min' },
+    { icon: '🤸', title: 'Stretch your neck, shoulders and hamstrings', detail: 'Hold each stretch for 30 seconds.', time: '5 min' },
+    { icon: '🧺', title: 'Fold one load of laundry', detail: 'Put it away before you stop.', time: '10 min' },
+    { icon: '🧱', title: 'Hold a wall sit for 30 seconds', detail: 'Rest for 30 seconds and repeat three times.', time: '3 min' },
+    { icon: '📝', title: 'Write a short note to yourself for tomorrow morning', detail: 'Start with "Tomorrow I want to wake up feeling…"', time: '5 min' },
+    { icon: '🧩', title: 'Do a sudoku or crossword', detail: 'Finish at least one section.', time: '10 min' },
+    { icon: '🪴', title: 'Water a plant or spend time with a pet', detail: 'Give it your full attention for a few minutes.', time: '5 min' },
+    { icon: '📞', title: 'Call someone who supports you', detail: 'Ask them about their day.', time: '10 min' },
+    { icon: '🎨', title: 'Draw or doodle with a timer', detail: 'Set five minutes and keep your pen moving.', time: '5 min' },
+    { icon: '🚿', title: 'Have a warm shower and put on fresh clothes', detail: 'Take your time.', time: '15 min' },
+    { icon: '🎒', title: 'Pack tomorrow\'s bag and lay out your clothes', detail: 'Get everything ready by the door.', time: '5 min' },
+    { icon: '🤾', title: 'Do 30 jumping jacks', detail: 'Rest, then do another 20.', time: '2 min' },
+  ];
+  const pickUrgentHelpActivities = () => {
+    const pool = URGENT_HELP_ACTIVITIES.slice();
+    for (let i = pool.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1));
+      [pool[i], pool[j]] = [pool[j], pool[i]];
+    }
+    return pool.slice(0, 3);
+  };
+  // Picks live at BeatTheBet scope (like other lifted state) so they don't reshuffle if this screen remounts.
+  const [urgentHelpPicks, setUrgentHelpPicks] = useState([]);
+  useEffect(() => {
+    if (showPanicModal) setUrgentHelpPicks(pickUrgentHelpActivities());
+  }, [showPanicModal]);
+
   const PanicModal = () => {
-    const [step, setStep] = useState('questions'); // 'questions' or 'answers'
-    const [panicResponses, setPanicResponses] = useState({
-      trigger: '',
-      why: '',
-      what_will_happen: ''
-    });
-
-    const panicQuestions = [
-      {
-        id: 'trigger',
-        question: 'What is triggering you right now?',
-        placeholder: 'Name the specific situation, feeling, or thought...',
-        helpText: 'Be specific. Naming it helps you see it clearly.'
-      },
-      {
-        id: 'why',
-        question: 'Why do you want to gamble right now?',
-        placeholder: 'What do you think gambling will give you?',
-        helpText: 'Is this really what you need, or just what feels urgent?'
-      },
-      {
-        id: 'what_will_happen',
-        question: 'How will you feel when you go to sleep tonight if you gamble now?',
-        placeholder: 'Think about lying in bed tonight...',
-        helpText: 'Picture yourself tonight. The shame. The regret. The broken promises.'
-      }
-    ];
-
-    const healthyDopamineActivities = [
-      { icon: '🏃', text: 'Go for a brisk walk or run right now', action: 'Move your body' },
-      { icon: '☀️', text: 'Step outside and get some sunlight and fresh air', action: 'Get outside' },
-      { icon: '🎵', text: 'Put on music you love and really listen, or dance', action: 'Listen to music' },
-      { icon: '📞', text: 'Call or text someone who supports you', action: 'Reach out' },
-      { icon: '🧘', text: 'Do 5 deep breaths - in for 4, out for 6', action: 'Breathe' },
-      { icon: '🚿', text: 'Take a cold shower', action: 'Cold shower' },
-      { icon: '✍️', text: 'Journal about this urge - get it out of your head', action: 'Write it out' },
-      { icon: '🤸', text: 'Do 20 push-ups, squats, or jumping jacks', action: 'Quick exercise' },
-    ];
-
-    const viewAnswers = () => {
-      if (!panicResponses.trigger && !panicResponses.why && !panicResponses.what_will_happen) {
-        return; // Don't proceed if no answers
-      }
-      setStep('answers');
-    };
-
+    const closeUrgentHelp = () => setShowPanicModal(false);
+    const daysClean = getDaysClean();
+    const reasonItems = (whyImQuitting.reasons || []).filter(r => r && r.content);
     return (
-      <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50 overflow-y-auto" onClick={(e) => e.stopPropagation()}>
-        <div className="bg-white rounded-2xl shadow-2xl max-w-2xl w-full p-6 my-8" onClick={(e) => e.stopPropagation()}>
-          {step === 'questions' ? (
-            <>
-              <div className="text-center mb-6">
-                <div className="bg-orange-100 w-16 h-16 rounded-full flex items-center justify-center mx-auto mb-4">
-                  <AlertCircle className="w-8 h-8 text-orange-600" />
-                </div>
-                <h2 className="text-2xl font-bold text-gray-800 mb-2">Slow Down</h2>
-                <p className="text-gray-600">
-                  Before you do anything, answer these questions honestly.
+      <div className="fixed inset-0 bg-black bg-opacity-50 flex items-start justify-center p-4 z-50 overflow-y-auto" onClick={(e) => e.stopPropagation()}>
+        <div role="dialog" aria-modal="true" aria-label="Urgent help" className="bg-white rounded-2xl shadow-2xl max-w-2xl w-full p-6 my-8 relative" onClick={(e) => e.stopPropagation()}>
+          <button
+            onClick={closeUrgentHelp}
+            aria-label="Close urgent help"
+            className="absolute top-3 right-4 text-gray-400 hover:text-gray-600 text-2xl leading-none"
+          >
+            ×
+          </button>
+
+          {/* Encouragement */}
+          <div className="bg-yellow-50 border-l-4 border-yellow-500 rounded-xl p-4 mb-5 mt-4">
+            <p className="text-sm text-gray-800 text-center leading-relaxed">
+              {daysClean >= 1
+                ? <>You've come <strong>{daysClean} day{daysClean !== 1 ? 's' : ''}</strong> without gambling. Reaching out right now is a strong move, and you're doing great for trying to make a change.</>
+                : <>Reaching out right now is a strong move, and you're doing great for trying to make a change.</>}
+            </p>
+          </div>
+
+          {/* Helpline */}
+          <div className="mb-6">
+            <p className="text-center text-gray-800 font-semibold mb-3">
+              Would you like to speak to someone? Free, confidential support is available any time.
+            </p>
+            <button
+              onClick={() => window.location.href = 'tel:1800858858'}
+              className="w-full bg-red-500 hover:bg-red-600 text-white rounded-xl p-4 flex items-center transition-colors shadow-md"
+            >
+              <Phone className="w-6 h-6 mr-3" />
+              <div className="text-left">
+                <div className="font-bold">Call Gambling Helpline Now</div>
+                <div className="text-sm opacity-95">1800 858 858 (Free, 24/7)</div>
+              </div>
+            </button>
+          </div>
+
+          {/* The user's own reasons */}
+          {(whyImQuitting.primaryReason || reasonItems.length > 0) ? (
+            <div className="bg-gradient-to-br from-red-50 to-pink-50 border-2 border-red-300 rounded-xl p-5 mb-6">
+              <div className="flex items-center mb-3">
+                <span className="text-3xl mr-3">❤️</span>
+                <h3 className="font-bold text-gray-900 text-lg">Remember Why You're Doing This</h3>
+              </div>
+              {whyImQuitting.primaryReason && (
+                <p className="text-gray-800 font-semibold mb-3 text-center italic">
+                  "{whyImQuitting.primaryReason}"
                 </p>
-              </div>
-
-              <div className="space-y-4 mb-6">
-                {panicQuestions.map((q) => (
-                  <div key={q.id} className="bg-gray-50 rounded-xl p-4">
-                    <h3 className="font-bold text-gray-800 mb-1">{q.question}</h3>
-                    <p className="text-xs text-gray-500 mb-2">{q.helpText}</p>
-                    <textarea
-                      value={panicResponses[q.id]}
-                      onChange={(e) => setPanicResponses({...panicResponses, [q.id]: e.target.value})}
-                      placeholder={q.placeholder}
-                      className="w-full h-24 p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-orange-500 focus:border-transparent resize-none"
-                    />
-                  </div>
-                ))}
-              </div>
-
-              <div className="flex gap-3">
-                <button
-                  onClick={() => setShowPanicModal(false)}
-                  className="flex-1 bg-gray-200 hover:bg-gray-300 text-gray-800 rounded-xl py-3 font-semibold transition-colors"
-                >
-                  Cancel
-                </button>
-                <button
-                  onClick={viewAnswers}
-                  disabled={!panicResponses.trigger && !panicResponses.why && !panicResponses.what_will_happen}
-                  className="flex-1 bg-orange-500 hover:bg-orange-600 disabled:bg-gray-300 text-white rounded-xl py-3 font-bold transition-colors"
-                >
-                  Read My Answers
-                </button>
-              </div>
-            </>
-          ) : (
-            <>
-              <div className="text-center mb-6">
-                <div className="bg-blue-100 w-16 h-16 rounded-full flex items-center justify-center mx-auto mb-4">
-                  <span className="text-3xl">💭</span>
-                </div>
-                <h2 className="text-2xl font-bold text-gray-800 mb-2">Read What You Just Wrote</h2>
-                <p className="text-gray-600">
-                  Does this sound like rational thinking, or addiction talking?
-                </p>
-              </div>
-
-              <div className="space-y-4 mb-6">
-                {panicQuestions.map((q) => (
-                  panicResponses[q.id] && (
-                    <div key={q.id} className="bg-blue-50 rounded-xl p-4">
-                      <p className="font-semibold text-gray-800 mb-2">{q.question}</p>
-                      <p className="text-gray-700 italic">"{panicResponses[q.id]}"</p>
-                    </div>
-                  )
-                ))}
-              </div>
-
-              {/* Why I'm Quitting Reminder */}
-              {(whyImQuitting.primaryReason || whyImQuitting.reasons.length > 0) && (
-                <div className="bg-gradient-to-br from-red-50 to-pink-50 border-2 border-red-300 rounded-xl p-5 mb-6">
-                  <div className="flex items-center mb-3">
-                    <span className="text-3xl mr-3">❤️</span>
-                    <h3 className="font-bold text-gray-900 text-lg">Remember Why You're Doing This</h3>
-                  </div>
-                  
-                  {whyImQuitting.primaryReason && (
-                    <p className="text-gray-800 font-semibold mb-3 text-center italic">
-                      "{whyImQuitting.primaryReason}"
-                    </p>
-                  )}
-                  
-                  {whyImQuitting.reasons.length > 0 && (
-                    <div className="grid grid-cols-2 gap-2 mt-3">
-                      {whyImQuitting.reasons.slice(0, 4).map((reason, idx) => (
-                        <div key={idx} className="bg-white rounded-lg p-2 border border-red-200">
-                          {reason.type === 'text' && (
-                            <p className="text-xs text-gray-700 line-clamp-2">{reason.content}</p>
-                          )}
-                          {reason.type === 'photo' && (
-                            <img src={reason.content} alt="Reminder" className="w-full rounded-lg object-cover max-h-24" />
-                          )}
-                        </div>
-                      ))}
-                    </div>
-                  )}
-                  
-                  <p className="text-xs text-gray-600 text-center mt-3">
-                    Is gambling really worth losing this?
-                  </p>
-                </div>
               )}
-
-              <div className="bg-green-50 border-2 border-green-500 rounded-xl p-4 mb-6">
-                <p className="font-bold text-gray-800 mb-3">Instead of gambling, try one of these:</p>
-                <div className="grid grid-cols-2 gap-2">
-                  {healthyDopamineActivities.map((activity, idx) => (
-                    <div
-                      key={idx}
-                      className="bg-white border border-green-200 rounded-lg p-3 text-left"
-                    >
-                      <span className="text-2xl block mb-1">{activity.icon}</span>
-                      <span className="text-xs font-semibold text-gray-700">{activity.action}</span>
+              {reasonItems.length > 0 && (
+                <div className="grid grid-cols-2 gap-2 mt-3">
+                  {reasonItems.slice(0, 8).map((reason, idx) => (
+                    <div key={idx} className="bg-white rounded-lg p-2 border border-red-200">
+                      {reason.type === 'text' && (
+                        <p className="text-xs text-gray-700">{reason.content}</p>
+                      )}
+                      {reason.type === 'photo' && (
+                        <img src={reason.content} alt="Something that matters to you" className="w-full rounded-lg object-cover max-h-40" />
+                      )}
                     </div>
                   ))}
                 </div>
-              </div>
-
-              <div className="bg-yellow-50 rounded-xl p-4 mb-6">
-                <p className="text-sm text-gray-700 text-center leading-relaxed">
-                  <strong>Remember:</strong> You've come {getDaysClean()} day{getDaysClean() !== 1 ? 's' : ''} without gambling. This urge will pass in 10-20 minutes. You just need to get through the next few minutes.
-                </p>
-              </div>
-
-              <div className="space-y-3 mb-6">
-                <button
-                  onClick={() => window.location.href = 'tel:1800858858'}
-                  className="w-full bg-red-500 hover:bg-red-600 text-white rounded-xl p-4 flex items-center transition-colors shadow-md"
-                >
-                  <Phone className="w-6 h-6 mr-3" />
-                  <div className="text-left">
-                    <div className="font-bold">Call Gambling Helpline Now</div>
-                    <div className="text-sm opacity-95">1800 858 858 (Free, 24/7)</div>
-                  </div>
-                </button>
-              </div>
-
-              <button
-                onClick={() => {
-                  setStep('questions');
-                  setPanicResponses({ trigger: '', why: '', what_will_happen: '' });
-                  setShowPanicModal(false);
-                }}
-                className="w-full bg-gray-200 hover:bg-gray-300 text-gray-800 rounded-xl py-3 font-semibold transition-colors"
-              >
-                Close
-              </button>
-            </>
+              )}
+              <p className="text-sm text-gray-700 text-center mt-4 leading-relaxed">
+                Take a moment to consider: how would you feel tonight, as you go to sleep, if you gambled today?
+              </p>
+            </div>
+          ) : (
+            <div className="bg-gray-50 border border-gray-200 rounded-xl p-5 mb-6">
+              <p className="text-sm text-gray-700 text-center leading-relaxed">
+                Take a moment to consider: how would you feel tonight, as you go to sleep, if you gambled today?
+              </p>
+              <p className="text-xs text-gray-500 text-center mt-3">
+                You can add your own reasons and photos under Tools &gt; Why I'm Quitting, and they'll appear here.
+              </p>
+            </div>
           )}
+
+          {/* Three specific quick activities */}
+          {urgentHelpPicks.length > 0 && (
+            <div className="bg-green-50 border-2 border-green-500 rounded-xl p-4 mb-6">
+              <p className="font-bold text-gray-800 mb-3">Try one of these right now:</p>
+              <div className="space-y-2">
+                {urgentHelpPicks.map((activity, idx) => (
+                  <div key={idx} className="bg-white border border-green-200 rounded-lg p-3 flex items-start">
+                    <span className="text-2xl mr-3" aria-hidden="true">{activity.icon}</span>
+                    <div className="flex-1">
+                      <p className="text-sm font-semibold text-gray-800">{activity.title}</p>
+                      <p className="text-xs text-gray-600 mt-0.5">{activity.detail}</p>
+                    </div>
+                    <span className="text-xs text-gray-500 ml-2 whitespace-nowrap">{activity.time}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          <button
+            onClick={closeUrgentHelp}
+            className="w-full bg-gray-200 hover:bg-gray-300 text-gray-800 rounded-xl py-3 font-semibold transition-colors"
+          >
+            Close
+          </button>
         </div>
       </div>
     );
@@ -2710,24 +2794,16 @@ export default function BeatTheBet() {
             </div>
           </div>
 
-          {/* Premium Tools Section */}
+          {/* Recovery Tools Section (all tools are available while the app is free) */}
           <div>
             <div className="flex items-center justify-between mb-3 px-1">
-              <h2 className="text-lg font-bold text-gray-800">Premium Tools</h2>
+              <h2 className="text-lg font-bold text-gray-800">Recovery Tools</h2>
             </div>
 
-            {/* Premium Banner */}
-            <div className="bg-gradient-to-br from-purple-500 to-blue-500 rounded-xl shadow-lg p-5 mb-4 text-white">
-              <div className="flex items-center mb-2">
-                <Sparkles className="w-5 h-5 mr-2" />
-                <h3 className="text-lg font-bold">Beat the Bet Premium</h3>
-              </div>
-              <p className="text-sm opacity-90 mb-3">
-                Advanced tools to strengthen your recovery and build a better life.
+            <div className="bg-blue-50 rounded-xl p-4 mb-4 border-l-4 border-blue-500">
+              <p className="text-sm text-gray-700">
+                Beat the Bet is free to use. Optional paid features may be added in future.
               </p>
-              <div className="bg-white bg-opacity-20 rounded-lg p-2 text-xs">
-                <strong>Our commitment:</strong> A portion of all revenue supports Lifeline Australia.
-              </div>
             </div>
 
             <div className="space-y-3">
@@ -2790,7 +2866,7 @@ export default function BeatTheBet() {
                       <ChevronRight className="w-5 h-5 text-gray-400" />
                     </div>
                     <p className="text-gray-600 text-sm leading-relaxed">
-                      Daily journaling, breathing exercises, coping tools
+                      Private daily journaling. More mindfulness tools coming soon
                     </p>
                   </div>
                 </div>
@@ -2908,9 +2984,8 @@ export default function BeatTheBet() {
           {/* Attribution */}
           <div className="pt-4 border-t border-gray-200">
             <p className="text-xs text-gray-500 text-center leading-relaxed">
-              Free resources provided in partnership with Gambling Help Online, BetStop (Australian Government), 
-              and Gamblers Anonymous Australia. Beat the Bet is not affiliated with these organizations 
-              but supports their mission.
+              Free support services you can contact: Gambling Help Online, BetStop (Australian Government), 
+              and Gamblers Anonymous Australia. Beat the Bet is independent and is not affiliated with these organizations.
             </p>
           </div>
         </div>
@@ -3344,7 +3419,7 @@ export default function BeatTheBet() {
   // full remount, silently wiping this component's local state (like
   // the feedback modal's open/closed state) back to its initial values.
   const DailyChallengesPageImpl = () => {
-    const SUPABASE_URL_LOCAL = 'https://emrpkubjspydnbrittuy.supabase.co';
+    const SUPABASE_URL_LOCAL = SUPABASE_URL;
 
     // State
     const [loading, setLoading] = React.useState(true);
@@ -5093,8 +5168,8 @@ export default function BeatTheBet() {
               <ArrowLeft className="w-5 h-5 mr-2" />
               <span>Back to Tools</span>
             </button>
-            <button onClick={() => setShowSettings(!showSettings)} className="p-2 hover:bg-white hover:bg-opacity-20 rounded-lg transition-colors">
-              <span className="text-lg">⚙️</span>
+            <button onClick={() => setShowSettings(!showSettings)} aria-label="Challenge settings" aria-expanded={!!showSettings} className="p-2 hover:bg-white hover:bg-opacity-20 rounded-lg transition-colors">
+              <span className="text-lg" aria-hidden="true">⚙️</span>
             </button>
           </div>
           <div className="flex items-center">
@@ -6690,13 +6765,14 @@ export default function BeatTheBet() {
                   <button
                     key={interest.id}
                     onClick={() => toggleInterest(interest.id)}
+                    aria-pressed={selectedInterests.includes(interest.id)}
                     className={`p-4 rounded-xl font-semibold transition-all text-left ${
                       selectedInterests.includes(interest.id)
                         ? 'bg-blue-500 text-white shadow-lg'
                         : 'bg-white text-gray-800 hover:bg-gray-50'
                     }`}
                   >
-                    <div className="text-2xl mb-1">{interest.icon}</div>
+                    <div className="text-2xl mb-1" aria-hidden="true">{interest.icon}</div>
                     <div className="text-sm">{interest.name.replace(/^.\s/, '')}</div>
                   </button>
                 ))}
@@ -6942,10 +7018,6 @@ export default function BeatTheBet() {
             <div className="bg-white rounded-xl shadow-md p-6">
               <h3 className="font-bold text-gray-800 mb-3">Coming Soon</h3>
               <div className="space-y-2 text-sm text-gray-600">
-                <div className="flex items-center">
-                  <span className="text-blue-500 mr-2">•</span>
-                  <span>Interest-based chat rooms</span>
-                </div>
                 <div className="flex items-center">
                   <span className="text-blue-500 mr-2">•</span>
                   <span>Activity tracking & streaks</span>
@@ -7719,7 +7791,7 @@ export default function BeatTheBet() {
     const currentUserId = session?.user?.id;
 
     return (
-      <div className="flex flex-col h-screen bg-gray-50">
+      <div className="flex flex-col h-screen bg-gray-50 pb-20">
         {/* Header */}
         <div className="bg-indigo-500 text-white p-6 shadow-lg">
           <button onClick={() => setActiveTool(null)} className="flex items-center mb-4 hover:opacity-80">
@@ -8165,7 +8237,10 @@ export default function BeatTheBet() {
   const MusicDiscoveryPage = () => {
     const [seedInput, setSeedInput] = useState('');
     const [generating, setGenerating] = useState(false);
-    const [viewMode, setViewMode] = useState('discover');
+    // Lifted to BeatTheBet scope: this page remounts when shared state changes (save/like/remove),
+    // which used to throw the user back to the Discover tab.
+    const viewMode = musicViewMode;
+    const setViewMode = setMusicViewMode;
     
     const LASTFM_KEY = 'bf998e6a6a406abca0544b6d74c51c40';
     const LASTFM = 'https://ws.audioscrobbler.com/2.0/';
@@ -8437,9 +8512,17 @@ export default function BeatTheBet() {
                       </div>
                       <h2 className="text-2xl font-bold mb-2">{current.name}</h2>
                       <p className="text-sm text-purple-600 mb-4">Because you like {current.source}</p>
+                      <ArtistBio name={current.name} />
                       
                       <TopTracksDisplay artist={current.name} fetchTracks={lastfmTopTracks} />
                     </div>
+
+                    <button
+                      onClick={() => setMusicListenArtist(current.name)}
+                      className="w-full mb-3 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 rounded-lg py-2 text-sm font-semibold transition-colors"
+                    >
+                      🎧 Listen
+                    </button>
 
                     <div className="grid grid-cols-2 gap-2 mb-2">
                       <button onClick={() => markArtist('known')} className="bg-gray-100 text-gray-700 py-3 rounded-lg font-semibold">Already Know</button>
@@ -8528,8 +8611,19 @@ export default function BeatTheBet() {
                   </div>
                 ) : (
                   savedForLater.map((rec, idx) => (
-                    <div key={idx} className="bg-white rounded-xl shadow-md p-4">
-                      <div className="flex items-center justify-between mb-2">
+                    <div key={idx} className="bg-white rounded-xl shadow-md p-4 relative">
+                      <button
+                        onClick={() => {
+                          const newSaved = savedForLater.filter((_, i) => i !== idx);
+                          setSavedForLater(newSaved);
+                          localStorage.setItem('savedForLater', JSON.stringify(newSaved));
+                        }}
+                        aria-label={`Remove ${rec.name} from saved`}
+                        className="absolute top-2 right-3 text-gray-400 hover:text-red-500 text-xl leading-none"
+                      >
+                        ×
+                      </button>
+                      <div className="flex items-center justify-between mb-2 pr-6">
                         <div>
                           <p className="font-bold text-gray-800">{rec.name}</p>
                           <p className="text-xs text-gray-500">{rec.source}</p>
@@ -8550,6 +8644,13 @@ export default function BeatTheBet() {
                           ❤️ Like
                         </button>
                       </div>
+                      <ArtistBio name={rec.name} />
+                      <button
+                        onClick={() => setMusicListenArtist(rec.name)}
+                        className="w-full mt-1 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 rounded-lg py-2 text-sm font-semibold transition-colors"
+                      >
+                        🎧 Listen
+                      </button>
                     </div>
                   ))
                 )}
@@ -8557,6 +8658,56 @@ export default function BeatTheBet() {
             )}
           </div>
         </div>
+        {musicListenArtist && (() => {
+          const q = encodeURIComponent(musicListenArtist);
+          const services = [
+            { name: 'Apple Music', url: `https://music.apple.com/search?term=${q}`, appUrl: `music://music.apple.com/search?term=${q}` },
+            { name: 'Spotify', url: `https://open.spotify.com/search/${q}`, appUrl: `spotify:search:${q}` },
+            { name: 'YouTube Music', url: `https://music.youtube.com/search?q=${q}` }
+          ];
+          return (
+            <div
+              className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-6 z-50"
+              onClick={closeMusicListen}
+            >
+              <div
+                role="dialog"
+                aria-modal="true"
+                aria-label={`Listen to ${musicListenArtist}`}
+                className="bg-white rounded-2xl shadow-2xl max-w-sm w-full p-6"
+                onClick={(e) => e.stopPropagation()}
+              >
+                <h3 className="font-bold text-gray-800 text-lg mb-1">Listen to {musicListenArtist}</h3>
+                <p className="text-sm text-gray-500 mb-4">Choose where you'd like to listen.</p>
+                <div className="space-y-2 mb-4">
+                  {services.map(svc => (
+                    <a
+                      key={svc.name}
+                      href={svc.url}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      onClick={(e) => openMusicService(e, svc)}
+                      className="block w-full bg-gray-100 hover:bg-gray-200 text-gray-800 rounded-xl py-3 text-center font-semibold transition-colors"
+                    >
+                      {svc.name}
+                    </a>
+                  ))}
+                </div>
+                {musicListenFallback && (
+                  <p className="text-sm text-gray-700 mb-3 text-center">
+                    We couldn't open the app. <a href={musicListenFallback} target="_blank" rel="noopener noreferrer" className="text-indigo-600 underline" onClick={closeMusicListen}>Open it on the web instead</a>
+                  </p>
+                )}
+                <button
+                  onClick={closeMusicListen}
+                  className="w-full text-gray-500 hover:text-gray-700 text-sm py-2"
+                >
+                  Cancel
+                </button>
+              </div>
+            </div>
+          );
+        })()}
       </div>
     );
   };
@@ -8668,8 +8819,25 @@ export default function BeatTheBet() {
                 </p>
               </div>
               <button
-                onClick={() => {
+                onClick={async () => {
                 if (isRevisit) { setOnboardingStep(2); return; }
+                // Safety net: never overwrite a start date that is already saved on the account.
+                try {
+                  const sess = supabase.getSession();
+                  const uid = (sess && sess.user && sess.user.id) || (currentUser && currentUser.id);
+                  if (uid) {
+                    const { data: existingRows } = await supabase.from('profiles').select('start_date').eq('id', uid);
+                    const existing = existingRows && existingRows[0] && existingRows[0].start_date;
+                    if (existing) {
+                      const ed = new Date(existing);
+                      setStartDate(ed);
+                      setProfileLoaded(true);
+                      localStorage.setItem('startDate', ed.toISOString());
+                      setOnboardingStep(2);
+                      return;
+                    }
+                  }
+                } catch (e) { /* if the check fails, fall through to the normal first-time flow */ }
                 const today = new Date().toISOString().split('T')[0];
                 setTempStartDate(today);
                 const d = new Date(today);
@@ -9399,12 +9567,13 @@ export default function BeatTheBet() {
           <div className="max-w-md mx-auto">
             {/* Month Navigation */}
             <div className="flex items-center justify-between mb-6">
-              <button onClick={prevMonth} className="p-2 hover:bg-gray-100 rounded-lg">
-                <ArrowLeft className="w-5 h-5" />
+              <button onClick={prevMonth} aria-label="Previous month" className="p-2 hover:bg-gray-100 rounded-lg">
+                <ArrowLeft className="w-5 h-5" aria-hidden="true" />
               </button>
               <h2 className="font-bold text-lg">{monthName}</h2>
               <button 
                 onClick={nextMonth} 
+                aria-label="Next month"
                 className="p-2 hover:bg-gray-100 rounded-lg"
                 disabled={new Date(currentMonth.getFullYear(), currentMonth.getMonth() + 1) > new Date()}
               >
@@ -9761,6 +9930,36 @@ export default function BeatTheBet() {
 
   const StreakAnalyticsPage = () => {
     const [viewMode, setViewMode] = useState('calendar'); // 'calendar', 'patterns', 'stats'
+
+    // QA-05: completed daily challenges are activities too. activityLog is a legacy log that nothing
+    // writes to any more, so "Activities Logged" stayed at 0 while challenges were being completed.
+    // Load completed challenge dates once; each completion is counted exactly once.
+    useEffect(() => {
+      // This component remounts whenever BeatTheBet re-renders, so throttle the fetch and only update
+      // state when the result changed; otherwise setting state here would re-render, remount and refetch forever.
+      if (Date.now() - challengeCompletionsFetchRef.current.at < 15000) return;
+      challengeCompletionsFetchRef.current.at = Date.now();
+      (async () => {
+        try {
+          const session = await supabase.getValidSession();
+          if (!session) return;
+          const res = await fetch(`${SUPABASE_URL}/rest/v1/user_challenge_history?user_id=eq.${session.user.id}&status=eq.completed&select=id,completed_at,challenge_date&order=challenge_date.desc&limit=1000`, {
+            headers: { 'apikey': SUPABASE_ANON_KEY, 'Authorization': `Bearer ${session.access_token}` }
+          });
+          if (!res.ok) return;
+          const rows = await res.json();
+          if (!Array.isArray(rows)) return;
+          const key = JSON.stringify(rows.map(r => r.id));
+          if (key === challengeCompletionsFetchRef.current.key) return;
+          challengeCompletionsFetchRef.current.key = key;
+          setChallengeCompletions(rows);
+        } catch (e) { /* leave the count at the activity log only */ }
+      })();
+    }, []);
+    const challengeActivityDates = challengeCompletions
+      .map(r => r.completed_at || r.challenge_date)
+      .filter(d => d && Number.isFinite(new Date(d).getTime()));
+    const activitiesLoggedCount = activityLog.length + challengeActivityDates.length;
     
     // Pattern Analysis Functions
     const analyzePatterns = () => {
@@ -9805,6 +10004,23 @@ export default function BeatTheBet() {
       oneWeekAgo.setDate(oneWeekAgo.getDate() - 7);
       patterns.thisWeekOpens = appOpenTimestamps.filter(t => new Date(t) > oneWeekAgo).length;
 
+      // QA-04: the Patterns tab reads these names, so provide them as finite values.
+      // (Previously only totalAppOpens/totalPanicButtonUses existed, so the tiles rendered blank.)
+      const validOpens = appOpenTimestamps.map(t => new Date(t).getTime()).filter(n => Number.isFinite(n));
+      patterns.totalOpens = validOpens.length;
+      patterns.panicButtonUses = panicButtonTimestamps.length;
+      if (validOpens.length > 0) {
+        const daysSpan = Math.max(1, Math.ceil((Date.now() - Math.min(...validOpens)) / 86400000));
+        patterns.averagePerDay = (validOpens.length / daysSpan).toFixed(1);
+      } else {
+        patterns.averagePerDay = '0.0';
+      }
+      patterns.riskiestDay = patterns.riskiestDayOfWeek;
+      patterns.riskiestTimeCategory = patterns.riskiestHourOfDay;
+      patterns.riskiestDayCount = panicButtonTimestamps.length > 0
+        ? panicButtonTimestamps.filter(t => new Date(t).toLocaleDateString('en-US', { weekday: 'long' }) === patterns.riskiestDayOfWeek).length
+        : 0;
+
       return patterns;
     };
 
@@ -9842,7 +10058,7 @@ export default function BeatTheBet() {
           show: true,
           day: currentDay,
           period: riskyPeriod,
-          message: `Heads up - you typically get triggered on ${currentDay} ${riskyPeriod}s. The urge will pass in 15-20 minutes. Stay strong.`
+          message: `Heads up - you typically get triggered on ${currentDay} ${riskyPeriod}s. Urges rise and fade. Keeping your hands and mind busy with something else for a few minutes can help this one ease off.`
         };
       }
 
@@ -9879,7 +10095,8 @@ export default function BeatTheBet() {
         const isClean = date >= new Date(startDate) && date <= now;
         const isToday = date.toDateString() === now.toDateString();
         const hasJournal = journalEntries.some(e => new Date(e.date).toDateString() === date.toDateString());
-        const hasActivity = activityLog.some(a => new Date(a.date).toDateString() === date.toDateString());
+        const hasActivity = activityLog.some(a => new Date(a.date).toDateString() === date.toDateString()) ||
+          challengeActivityDates.some(d => new Date(d).toDateString() === date.toDateString());
         
         days.push({
           date: day,
@@ -9912,10 +10129,10 @@ export default function BeatTheBet() {
           return entryDate >= weekStart && entryDate <= weekEnd;
         }).length;
         const activeDays = new Set(
-          activityLog.filter(a => {
-            const activityDate = new Date(a.date);
+          [...activityLog.map(a => a.date), ...challengeActivityDates].filter(d => {
+            const activityDate = new Date(d);
             return activityDate >= weekStart && activityDate <= weekEnd;
-          }).map(a => new Date(a.date).toDateString())
+          }).map(d => new Date(d).toDateString())
         ).size;
         
         weeks.push({
@@ -10078,7 +10295,8 @@ export default function BeatTheBet() {
                   </div>
                   <div className="bg-white rounded-xl shadow-md p-5">
                     <p className="text-sm text-gray-600 mb-1">Activities Logged</p>
-                    <p className="text-3xl font-bold text-gray-800">{activityLog.length}</p>
+                    <p className="text-3xl font-bold text-gray-800">{activitiesLoggedCount}</p>
+                    <p className="text-xs text-gray-500 mt-1">Includes completed daily challenges</p>
                   </div>
                   <div className="bg-white rounded-xl shadow-md p-5">
                     <p className="text-sm text-gray-600 mb-1">Badges Earned</p>
@@ -10201,13 +10419,13 @@ export default function BeatTheBet() {
                           </div>
                           <div className="bg-purple-50 rounded-lg p-4">
                             <p className="text-2xl font-bold text-purple-600">{patterns.averagePerDay}</p>
-                            <p className="text-xs text-gray-600 mt-1">Average per day</p>
+                            <p className="text-xs text-gray-600 mt-1">Average opens per day</p>
                           </div>
                         </div>
                       </div>
 
                       {/* Pattern Insights */}
-                      {patterns.totalOpens >= 5 && (
+                      {patterns.totalOpens >= 5 && patterns.riskiestDay && (
                         <>
                           <div className="bg-white rounded-xl shadow-md p-6 mb-4">
                             <h3 className="font-bold text-gray-800 mb-4">What Your Data Shows</h3>
@@ -10261,7 +10479,7 @@ export default function BeatTheBet() {
                               </li>
                               <li className="flex items-start gap-2">
                                 <span className="text-green-600 mt-0.5">✓</span>
-                                <span>Urges typically last 15-20 minutes. When you feel triggered, set a timer and wait it out.</span>
+                                <span>Urges come in waves, and waves pass. When one builds, put your attention on something else, like a walk, a call or a small job, and let it ease off.</span>
                               </li>
                               <li className="flex items-start gap-2">
                                 <span className="text-green-600 mt-0.5">✓</span>
@@ -10377,13 +10595,14 @@ export default function BeatTheBet() {
                   <button
                     key={interest.id}
                     onClick={() => toggleInterest(interest.id)}
+                    aria-pressed={selectedInterests.includes(interest.id)}
                     className={`p-4 rounded-xl font-semibold transition-all text-left ${
                       selectedInterests.includes(interest.id)
                         ? 'bg-purple-500 text-white shadow-lg'
                         : 'bg-white text-gray-800 hover:bg-gray-50'
                     }`}
                   >
-                    <div className="text-2xl mb-1">{interest.icon}</div>
+                    <div className="text-2xl mb-1" aria-hidden="true">{interest.icon}</div>
                     <div className="text-sm">{interest.name.replace(/^.\s/, '')}</div>
                   </button>
                 ))}
@@ -11257,8 +11476,7 @@ Keep going! Every day counts. 💪
 
           <div className="bg-blue-50 rounded-xl p-6 border-l-4 border-blue-500">
             <p className="text-sm text-gray-700">
-              <strong>Premium features coming soon:</strong> Additional tools to support your recovery 
-              journey. A portion of all premium revenue will be donated to Lifeline Australia.
+              <strong>Free to use:</strong> Beat the Bet is free. Optional paid features may be added in future.
             </p>
           </div>
         </div>
@@ -11285,7 +11503,7 @@ Keep going! Every day counts. 💪
               Advanced tools to strengthen your recovery, give you healthy outlets, and help you build a better life.
             </p>
             <div className="bg-white bg-opacity-20 rounded-lg p-3 text-sm">
-              <strong>Our commitment:</strong> A portion of all premium revenue supports Lifeline Australia.
+              Beat the Bet is free to use. Optional paid features may be added in future.
             </div>
           </div>
 
