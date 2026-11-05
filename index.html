@@ -44,7 +44,10 @@
         key: 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImVtcnBrdWJqc3B5ZG5icml0dHV5Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3Nzk2NTE1MjQsImV4cCI6MjA5NTIyNzUyNH0.wyrwYfXyOZgdS3NnK7z-kTU-KwbfOH_TF1vv6CsNCmI'
       };
       var PROD_HOSTS = ['btb1.vercel.app', 'beatthebet.com.au', 'www.beatthebet.com.au'];
-      var STAGING = { url: '', key: '' }; // fill in once the staging Supabase project exists
+      var STAGING = {
+        url: 'https://euyvnkgpadcqodwyxbfp.supabase.co',
+        key: 'sb_publishable_Tg0KaMjZ7SLBIZXQso93Tw_1ShqubzJ' // publishable key: safe to ship in the browser
+      };
       var isProd = PROD_HOSTS.indexOf(location.hostname) !== -1;
       var cfg = isProd ? PROD : STAGING;
       var configured = !!(cfg.url && cfg.key);
@@ -54,6 +57,22 @@
         url: configured ? cfg.url : 'https://staging-not-configured.invalid',
         key: configured ? cfg.key : 'staging-not-configured'
       };
+      // New-style publishable keys (sb_publishable_...) are not JWTs, so they must only be sent in the
+      // 'apikey' header, never as 'Authorization: Bearer'. Strip that header when it carries the bare key.
+      if (configured && cfg.key.indexOf('sb_') === 0) {
+        var _fetch = window.fetch.bind(window);
+        window.fetch = function (input, init) {
+          try {
+            var u = typeof input === 'string' ? input : (input && input.url) || '';
+            if (u.indexOf(cfg.url) === 0 && init && init.headers) {
+              var hd = new Headers(init.headers);
+              if (hd.get('Authorization') === 'Bearer ' + cfg.key) hd.delete('Authorization');
+              init = Object.assign({}, init, { headers: hd });
+            }
+          } catch (e) {}
+          return _fetch(input, init);
+        };
+      }
       if (!isProd) {
         document.addEventListener('DOMContentLoaded', function () {
           var bar = document.createElement('div');
